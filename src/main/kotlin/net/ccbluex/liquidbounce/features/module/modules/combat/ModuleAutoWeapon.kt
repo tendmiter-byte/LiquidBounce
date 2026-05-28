@@ -46,7 +46,9 @@ import net.ccbluex.liquidbounce.utils.kotlin.matchesAny
 import net.minecraft.world.InteractionHand
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.LivingEntity
+import net.minecraft.world.item.ItemStack
 import net.minecraft.world.item.MaceItem
+import net.minecraft.world.item.enchantment.Enchantments
 
 /**
  * AutoWeapon module
@@ -63,6 +65,15 @@ object ModuleAutoWeapon : ClientModule("AutoWeapon", ModuleCategories.COMBAT) {
      * This is useful if you only want to make use of either [autoShieldBreak] or [autoMace].
      */
     private val preferredWeapon by multiEnumChoice("Preferred", WeaponType.SWORD)
+
+    private val PriorityChoice by enumChoice("Priority", Priorities.DEFAULT)
+
+    private enum class Priorities(override val tag: String) : Tagged {
+        DEFAULT("Default"),
+        KNOCKBACK("Knockback"),
+        DAMAGE("Damage"),
+        ATTACK_SPEED("AttackSpeed")
+    }
 
     private val autoShieldBreak by boolean("AutoShieldBreak", true)
     private val autoMace by boolean("AutoMace", true)
@@ -169,6 +180,35 @@ object ModuleAutoWeapon : ClientModule("AutoWeapon", ModuleCategories.COMBAT) {
         SilentHotbar.resetSlot(this)
     }
 
+    private fun getBestDamageItem(): ItemStack? {
+        return Slots.Hotbar
+            .map { player.inventory.getItem(it.inventorySlot) }
+            .filter { !it.isEmpty && preferredWeapon.matchesAny(it) }
+            .maxByOrNull { it.damageValue }
+    }
+
+    private fun getBestAttackSpeedItem(itemCategorization: ItemCategorization): ItemStack? {
+        return Slots.Hotbar
+            .flatMap { slot -> itemCategorization.getItemFacets(slot).filterIsInstance<WeaponItemFacet>() }
+            .map { it.itemStack }
+            .filter { preferredWeapon.matchesAny(it) }
+            .maxByOrNull { it.attackSpeed }
+    }
+
+    private fun getBestKnockbackItem(itemCategorization: ItemCategorization): ItemStack? {
+        return Slots.Hotbar
+            .flatMap { slot -> itemCategorization.getItemFacets(slot).filterIsInstance<WeaponItemFacet>() }
+            .map { it.itemStack }
+            .filter { preferredWeapon.matchesAny(it) }
+            .maxByOrNull { itemStack ->
+                val enchantments = itemStack.enchantments
+
+                enchantments.entrySet().firstOrNull { entry ->
+                    entry.key.`is`(Enchantments.KNOCKBACK)
+                }?.intValue ?: 0
+            }
+    }
+
     private fun determineWeaponSlot(target: LivingEntity?, enforceShield: Boolean = false): HotbarItemSlot? {
         val itemCategorization = ItemCategorization(Slots.Hotbar)
         val requiresShield = autoShieldBreak && (enforceShield || target?.wouldBlockHit == true)
@@ -187,8 +227,28 @@ object ModuleAutoWeapon : ClientModule("AutoWeapon", ModuleCategories.COMBAT) {
                 when {
                     // A mace's smash attack cannot be blocked by a shield
                     requiresMace -> WeaponType.MACE.test(itemStack)
+
                     // An axe will stun the target if it is blocking with a shield
                     requiresShield -> WeaponType.AXE.test(itemStack)
+
+                    // All items
+                    PriorityChoice == Priorities.KNOCKBACK -> {
+                        val bestKnockbackItem = getBestKnockbackItem(itemCategorization)
+                        itemStack == bestKnockbackItem
+                    }
+
+                    // All items
+                    PriorityChoice == Priorities.DAMAGE -> {
+                        val bestDamageItem = getBestDamageItem()
+                        itemStack == bestDamageItem
+                    }
+
+                    // All items
+                    PriorityChoice == Priorities.ATTACK_SPEED -> {
+                        val bestSpeedItem = getBestAttackSpeedItem(itemCategorization)
+                        itemStack == bestSpeedItem
+                    }
+
                     // Fall back to a preferred weapon when no special case applies
                     else -> preferredWeapon.matchesAny(itemStack)
                 }
