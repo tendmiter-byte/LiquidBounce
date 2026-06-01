@@ -18,12 +18,14 @@
  */
 package net.ccbluex.liquidbounce.features.module.modules.player.cheststealer
 
+import it.unimi.dsi.fastutil.ints.Int2DoubleOpenHashMap
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet
+import net.ccbluex.fastutil.objectHashSetOf
 import net.ccbluex.fastutil.swap
-import net.ccbluex.liquidbounce.config.types.list.Tagged
 import net.ccbluex.liquidbounce.config.types.group.Mode
 import net.ccbluex.liquidbounce.config.types.group.ModeValueGroup
 import net.ccbluex.liquidbounce.config.types.group.ToggleableValueGroup
+import net.ccbluex.liquidbounce.config.types.list.Tagged
 import net.ccbluex.liquidbounce.event.events.ScheduleInventoryActionEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.ClientModule
@@ -34,7 +36,9 @@ import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.Cleanu
 import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.InventoryCleanupPlan
 import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.ItemAndComponents
 import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.ItemCategorization
+import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.ItemType
 import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.ModuleInventoryCleaner
+import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.items.WeaponItemFacet
 import net.ccbluex.liquidbounce.utils.inventory.CheckScreenHandlerTypeValueGroup
 import net.ccbluex.liquidbounce.utils.inventory.CheckScreenTitleValueGroup
 import net.ccbluex.liquidbounce.utils.inventory.ContainerItemSlot
@@ -75,7 +79,7 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
         SIMULATION("Simulation")
     }
 
-    private val selectionMode = choices("SelectionMode", Distance, arrayOf(Distance, Index, Random)).apply(::tagBy)
+    private val selectionMode = choices("SelectionMode", Distance, arrayOf(Distance, Index, Random, InvCleanerPriority)).apply(::tagBy)
     private val itemMoveMode by enumChoice("MoveMode", ItemMoveMode.QUICK_MOVE)
     private val quickSwaps by boolean("QuickSwaps", true)
 
@@ -428,6 +432,67 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
         return itemsByType
     }
 
+    private fun sortByDistance(slots: MutableList<ContainerItemSlot>, factorRange: ClosedFloatingPointRange<Float>) {
+        val n = slots.size
+        if (n <= 2) return
+
+        val hasRandom = factorRange.start != factorRange.endInclusive
+        val randomFactors = if (hasRandom) Int2DoubleOpenHashMap(n) else null
+
+        if (randomFactors != null) {
+            for (slot in slots) {
+                randomFactors.put(slot.slotInContainer, factorRange.random().toDouble())
+            }
+        }
+
+        for (i in 0..<n - 1) {
+            var bestIdx = i + 1
+            var bestDist = Double.MAX_VALUE
+
+            val current = slots[i]
+
+            for (j in i + 1..<n) {
+                val candidate = slots[j]
+                val baseDist = current.distance(candidate).toDouble()
+                val randomizedDist = if (randomFactors == null) {
+                    baseDist
+                } else {
+                    baseDist * randomFactors.get(candidate.slotInContainer)
+                }
+
+                if (randomizedDist < bestDist) {
+                    bestDist = randomizedDist
+                    bestIdx = j
+                }
+            }
+
+            slots.swap(i + 1, bestIdx)
+        }
+    }
+
+    private fun invCleanerPriorityFor(slot: ItemSlot): Int {
+        val categoryType = primaryItemType(slot)
+        return when (categoryType) {
+            ItemType.ARMOR -> 5
+            ItemType.SWORD -> 4
+            ItemType.WEAPON, ItemType.SPEAR, ItemType.MACE -> 3
+            ItemType.PEARL -> 2
+            ItemType.TOOL -> 1
+            else -> 0
+        }
+    }
+
+    private fun primaryItemType(slot: ItemSlot): ItemType {
+        val facets = ItemCategorization.Default.getItemFacets(slot)
+        val nonWeaponFacets = facets.filterNot { it is WeaponItemFacet }
+        val facetsToCheck = if (nonWeaponFacets.isEmpty()) facets else nonWeaponFacets
+
+        return facetsToCheck
+            .maxBy { it.category.type.allocationPriority }
+            .category
+            .type
+    }
+
     private sealed class SelectionMode(name: String) : Mode(name) {
         final override val parent: ModeValueGroup<*>
             get() = selectionMode
@@ -437,7 +502,7 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
 
     private object Distance : SelectionMode("Distance") {
         private val startItem by enumChoice("StartItem", StartItem.DEFAULT)
-        private val randomFactor by floatRange("RandomFactor", 1.0f..1.0f, 0.25f..2f)
+        val randomFactor by floatRange("RandomFactor", 1.0f..1.0f, 0.25f..2.0f)
 
         override fun process(slots: ArrayList<ContainerItemSlot>) {
             val n = slots.size
@@ -448,28 +513,7 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
                 slots.swap(0, startIndex)
             }
 
-            if (n <= 2) return
-
-            for (i in 0..<n - 1) {
-                var bestIdx = i + 1
-                var bestDist = Float.POSITIVE_INFINITY
-
-                val current = slots[i]
-
-                for (j in i + 1..<n) {
-                    val candidate = slots[j]
-                    val distance = current.distance(candidate).toFloat()
-                    val factor = if (randomFactor.isEmpty()) 1F else randomFactor.random()
-                    val effectiveDistance = distance * factor
-
-                    if (effectiveDistance < bestDist) {
-                        bestDist = effectiveDistance
-                        bestIdx = j
-                    }
-                }
-
-                slots.swap(i + 1, bestIdx)
-            }
+            sortByDistance(slots, randomFactor)
         }
 
         private enum class StartItem(override val tag: String) : Tagged {
@@ -519,6 +563,24 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
 
     private object Random : SelectionMode("Random") {
         override fun process(slots: ArrayList<ContainerItemSlot>) = slots.shuffle()
+    }
+
+    private object InvCleanerPriority : SelectionMode("InvCleanerPriority") {
+        val distanceRandomFactor by floatRange("DistanceRandomFactor", 1.0f..1.0f, 0.0f..5.0f, "factor")
+
+        override fun process(slots: ArrayList<ContainerItemSlot>) {
+            if (slots.size <= 2) return
+
+            val grouped = slots.groupBy { invCleanerPriorityFor(it) }
+            val sortedPriorities = grouped.keys.sortedDescending()
+
+            slots.clear()
+            for (priority in sortedPriorities) {
+                val groupSlots = grouped.getValue(priority).toMutableList()
+                sortByDistance(groupSlots, distanceRandomFactor)
+                slots.addAll(groupSlots)
+            }
+        }
     }
 
     /**
