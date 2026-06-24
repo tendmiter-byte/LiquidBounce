@@ -51,6 +51,9 @@ import net.minecraft.network.protocol.game.ServerboundSpectatorActionPacket
 import net.minecraft.network.protocol.game.ServerboundSwingPacket
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket
 import net.minecraft.world.phys.Vec3
+import net.ccbluex.liquidbounce.features.module.modules.combat.fakelag.FakeLagRequirements
+import net.ccbluex.liquidbounce.utils.collection.itemSortedSetOf
+import net.minecraft.world.item.ItemStack
 import java.util.function.Predicate
 import kotlin.jvm.optionals.getOrNull
 
@@ -67,6 +70,12 @@ object ModuleFakeLag : ClientModule("FakeLag", ModuleCategories.COMBAT) {
     private val mode by enumChoice("Mode", Mode.DYNAMIC).apply { tagBy(this) }
 
     private val flushOn by multiEnumChoice("FlushOn", FlushOn.entries)
+
+    private val requires by multiEnumChoice<FakeLagRequirements>("Requires")
+    private val attackItems by items("Items", itemSortedSetOf())
+
+    private val requirementsMet
+        get() = requires.all { it.asBoolean }
 
     private enum class FlushOn(
         override val tag: String,
@@ -131,6 +140,10 @@ object ModuleFakeLag : ClientModule("FakeLag", ModuleCategories.COMBAT) {
         if (event.origin != TransferOrigin.OUTGOING || player.isDeadOrDying || player.isInWater
             || mc.gui.screen() != null
         ) {
+            return@handler
+        }
+
+        if (!requirementsMet || !isAllowedAttackItem(player.mainHandItem)) {
             return@handler
         }
 
@@ -248,8 +261,17 @@ object ModuleFakeLag : ClientModule("FakeLag", ModuleCategories.COMBAT) {
         }
     }
 
+    internal fun isAllowedAttackItem(itemStack: ItemStack): Boolean {
+        if (itemStack.isEmpty && FakeLagRequirements.EMPTY_HAND in requires) {
+            return true
+        }
+
+        return attackItems.isEmpty() || itemStack.item in attackItems
+    }
+
     override fun onDisabled() {
         isEnemyNearby = false
+        BlinkManager.flush(TransferOrigin.OUTGOING)
         super.onDisabled()
     }
 
