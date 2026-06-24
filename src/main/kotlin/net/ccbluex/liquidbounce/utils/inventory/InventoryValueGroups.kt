@@ -154,8 +154,8 @@ class CheckScreenTitleValueGroup(
         "Titles",
         enumSetOf(
             ContainerTitle.CHEST, ContainerTitle.LARGE_CHEST,
-            ContainerTitle.SHULKER_BOX, ContainerTitle.BARREL,
-            ContainerTitle.CHEST_MINECART,
+            ContainerTitle.ENDER_CHEST, ContainerTitle.SHULKER_BOX,
+            ContainerTitle.BARREL, ContainerTitle.CHEST_MINECART,
         ),
     )
     private val customTitles by textList("Custom", ObjectRBTreeSet())

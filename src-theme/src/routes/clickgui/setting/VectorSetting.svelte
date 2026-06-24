@@ -8,8 +8,8 @@
     export let vecAxes: VecAxis[];
     export let step: number;
 
-    const cSetting = setting as Setting<Vec<typeof vecAxes[number]>>;
-    const useLocateButton = (setting as Vec3Setting).useLocateButton ?? false;
+    $: cSetting = setting as Setting<Vec<typeof vecAxes[number]>>;
+    $: useLocateButton = (setting as Vec3Setting).useLocateButton ?? false;
 
     const dispatch = createEventDispatcher();
 

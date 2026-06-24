@@ -12,8 +12,8 @@
     export let path: string;
     export let items: NamedItem[];
 
-    const cSetting = setting as ListSetting;
-    const thisPath = `${path}.${cSetting.name}`;
+    $: cSetting = setting as ListSetting;
+    $: thisPath = `${path}.${cSetting.name}`;
 
     const dispatch = createEventDispatcher();
     let expanded = localStorage.getItem(thisPath) === "true";

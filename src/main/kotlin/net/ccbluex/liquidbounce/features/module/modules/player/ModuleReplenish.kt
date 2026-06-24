@@ -142,13 +142,15 @@ object ModuleReplenish : ClientModule("Replenish", ModuleCategories.PLAYER, alia
                         Click.performSwap(from = slotWithMaxCount, to = slot)
                     )
 
-                Features.USE_PICKUP_ALL in features && currentStackNotEmpty ->
-                    event.schedule(
-                        constraints,
-                        Click.performMergeStack(slot = slot),
+                Features.DRAG_AND_DROP in features && currentStackNotEmpty ->
+                    event.scheduleDragAndDropRefill(
+                        itemStack,
+                        itemStack.count,
+                        inventorySlots,
+                        slot,
                     )
 
-                else -> event.scheduleNormalRefill(
+                else -> event.scheduleDragAndDropRefill(
                     itemStack,
                     if (currentStackNotEmpty) itemStack.count else 0,
                     inventorySlots,
@@ -161,7 +163,7 @@ object ModuleReplenish : ClientModule("Replenish", ModuleCategories.PLAYER, alia
         }
     }
 
-    private fun ScheduleInventoryActionEvent.scheduleNormalRefill(
+    private fun ScheduleInventoryActionEvent.scheduleDragAndDropRefill(
         itemStack: ItemStack,
         count: Int,
         inventorySlots: List<InventoryItemSlot>,
@@ -197,10 +199,11 @@ object ModuleReplenish : ClientModule("Replenish", ModuleCategories.PLAYER, alia
                 )
 
     private enum class Features(
-        override val tag: String
+        override val tag: String,
+        override val tagAliases: List<String> = emptyList(),
     ) : Tagged {
         CLEANUP("CleanUp"),
-        USE_PICKUP_ALL("UsePickupAll"),
+        DRAG_AND_DROP("DragAndDrop", listOf("UseDragAndDrop", "UsePickupAll")),
         USE_SWAP("UseSwap"),
     }
 

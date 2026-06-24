@@ -29,6 +29,7 @@
     "minecraft.client.MixinGameType",
     "minecraft.client.MixinGui",
     "minecraft.client.MixinKeyboardHandler",
+    "minecraft.client.MixinKeyboardHandlerAccessor",
     "minecraft.client.MixinKeyboardInput",
     "minecraft.client.MixinKeyMapping",
     "minecraft.client.MixinLevel",

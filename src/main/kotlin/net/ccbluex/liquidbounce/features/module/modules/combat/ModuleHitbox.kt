@@ -42,9 +42,11 @@ object ModuleHitbox : ClientModule("Hitbox", ModuleCategories.COMBAT) {
 
     @Suppress("unused")
     private val marginHandler = handler<EntityMarginEvent> { event ->
-        if (event.entity.shouldBeAttacked()) {
+        if (shouldApply() && event.entity.shouldBeAttacked()) {
             event.margin = size
         }
     }
+
+    fun shouldApply() = running
 
 }

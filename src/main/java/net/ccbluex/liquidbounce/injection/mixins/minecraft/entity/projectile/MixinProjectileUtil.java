@@ -38,7 +38,9 @@ public abstract class MixinProjectileUtil {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/world/item/component/AttackRange;hitboxMargin()F")
     )
     private static float applyHitboxMargin(float original, @Local(argsOnly = true, name = "attacker") Entity entity) {
-        if (entity == Minecraft.getInstance().player && ModuleHitbox.INSTANCE.getRunning() && ModuleHitbox.INSTANCE.getApplyToComponent()) {
+        if (entity == Minecraft.getInstance().player
+            && ModuleHitbox.INSTANCE.shouldApply()
+            && ModuleHitbox.INSTANCE.getApplyToComponent()) {
             return ModuleHitbox.INSTANCE.getSize() + original;
         }
         return original;

@@ -169,13 +169,11 @@ object InventoryManager : EventListener {
                             waitTicks(constraints.startDelay.random())
                             cycles = 0
                         }
-                    } else if (canCloseMainInventory) {
+                    } else if (canCloseSilentPlayerInventory) {
                         // When all scheduled actions are done, we can close the inventory
-                        if (isInventoryOpen) {
-                            waitTicks(constraints.closeDelay.random())
-                            cycles = 0
-                            network.sendCloseInventory()
-                        }
+                        waitTicks(constraints.closeDelay.random())
+                        cycles = 0
+                        network.sendCloseInventory()
                     }
 
                     // This should usually not happen, but we have to check it
@@ -213,8 +211,8 @@ object InventoryManager : EventListener {
             }
         } while (schedule.isNotEmpty())
 
-        // When all scheduled actions are done, we can close the inventory
-        if (isInventoryOpen && canCloseMainInventory) {
+        // When all scheduled actions are done, we can close the silently opened player inventory
+        if (canCloseSilentPlayerInventory) {
             waitTicks(maximumCloseDelay)
             network.sendCloseInventory()
         }

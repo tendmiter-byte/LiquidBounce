@@ -128,7 +128,7 @@ object ModuleAutoShop : ClientModule("AutoShop", ModuleCategories.PLAYER) {
 
         // close the shop after buying items
         if (waitedBeforeTheFirstClick && autoClose && canAutoClose) {
-            player.closeContainer()
+            player.clientSideCloseContainer()
         }
         reset()
     }

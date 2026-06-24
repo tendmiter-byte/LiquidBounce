@@ -32,10 +32,10 @@ import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleC
 import net.ccbluex.liquidbounce.features.module.modules.combat.elytratarget.ModuleElytraTarget
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.KillAuraRotationsValueGroup.KillAuraRotationTiming.ON_TICK
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.KillAuraRotationsValueGroup.KillAuraRotationTiming.SNAP
+import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.ModuleAutoBuff
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura.RaycastMode.TRACE_ALL
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura.RaycastMode.TRACE_NONE
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura.RaycastMode.TRACE_ONLYENEMY
-import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura.waitTicks
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraAutoBlock
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraFailSwing
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraFailSwing.dealWithFakeSwing
@@ -58,6 +58,7 @@ import net.ccbluex.liquidbounce.utils.aiming.point.PointTracker
 import net.ccbluex.liquidbounce.utils.aiming.preference.LeastDifferencePreference
 import net.ccbluex.liquidbounce.utils.aiming.utils.raytraceBox
 import net.ccbluex.liquidbounce.utils.block.SwingMode
+import net.ccbluex.liquidbounce.utils.collection.itemSortedSetOf
 import net.ccbluex.liquidbounce.utils.combat.CombatManager
 import net.ccbluex.liquidbounce.utils.combat.attackEntity
 import net.ccbluex.liquidbounce.utils.combat.shouldBeAttacked
@@ -97,6 +98,8 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
     private val requirementsMet
         get() = requires.all { it.asBoolean }
 
+    private val attackItems by items("Items", itemSortedSetOf())
+
     // Bypass techniques
     internal val raycast by enumChoice("Raycast", TRACE_ALL)
     private val criticalsSelectionMode by enumChoice("Criticals", CriticalsSelectionMode.SMART)
@@ -113,6 +116,9 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
      */
     internal var waitTicks = 0
 
+    private fun shouldYieldToAutoBuff(): Boolean =
+        CombatManager.shouldPauseCombat || ModuleAutoBuff.isBuffing
+
     init {
         tree(KillAuraAutoBlock)
         tree(TargetRenderer(this) {
@@ -127,6 +133,7 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         targetTracker.reset()
         failedHits.clear()
         KillAuraNotifyWhenFail.failedHitsIncrement = 0
+        waitTicks = 0
     }
 
     @Suppress("unused")
@@ -139,10 +146,6 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
 
     @Suppress("unused")
     private val rotationUpdateHandler = handler<RotationUpdateEvent> {
-        if (waitTicks > 0) {
-            waitTicks--
-        }
-
         // Make sure killaura-logic is not running while inventory is open
         val isInInventoryScreen = isInventoryOpen || mc.gui.screen() is ContainerScreen
         val shouldResetTarget = player.isSpectator || player.isDeadOrDying || !requirementsMet
@@ -157,7 +160,9 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         updateTarget()
 
         // Update Auto Weapon
-        ModuleAutoWeapon.onTarget(targetTracker.target)
+        if (!shouldYieldToAutoBuff()) {
+            ModuleAutoWeapon.onTarget(targetTracker.target)
+        }
     }
 
     @Suppress("unused")
@@ -169,7 +174,7 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         // Check if there is target to attack
         val target = targetTracker.target
 
-        if (CombatManager.shouldPauseCombat) {
+        if (shouldYieldToAutoBuff()) {
             KillAuraAutoBlock.stopBlocking()
             return@tickHandler
         }
@@ -185,6 +190,12 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
                     dealWithFakeSwing(null)
                 }
             }
+            return@tickHandler
+        }
+
+        if (waitTicks > 0) {
+            debugParameter("Wait Ticks") { waitTicks }
+            waitTicks--
             return@tickHandler
         }
 
@@ -267,7 +278,7 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
             val hasUnblocked = KillAuraAutoBlock.stopBlocking()
             if (hasUnblocked && KillAuraAutoBlock.pauseOnUnblockTicks > 0) {
                 waitTicks = KillAuraAutoBlock.pauseOnUnblockTicks
-            }else if (KillAuraFailSwing.enabled) {
+            } else if (KillAuraFailSwing.enabled) {
                 dealWithFakeSwing(target)
             }
             return
@@ -328,14 +339,16 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         } else if (KillAuraFightBot.enabled) {
             KillAuraFightBot.updateTarget()
 
-            RotationManager.setRotationTarget(
-                rotations.toRotationTarget(
-                    KillAuraFightBot.getMovementRotation(),
-                    considerInventory = !ignoreOpenInventory
-                ),
-                priority = Priority.IMPORTANT_FOR_USAGE_2,
-                provider = ModuleKillAura
-            )
+            if (!shouldYieldToAutoBuff()) {
+                RotationManager.setRotationTarget(
+                    rotations.toRotationTarget(
+                        KillAuraFightBot.getMovementRotation(),
+                        considerInventory = !ignoreOpenInventory
+                    ),
+                    priority = Priority.IMPORTANT_FOR_USAGE_2,
+                    provider = ModuleKillAura
+                )
+            }
         } else {
             targetTracker.reset()
         }
@@ -371,15 +384,18 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
             }
         }
 
-        RotationManager.setRotationTarget(
-            rotations.toRotationTarget(
-                rotation,
-                entity,
-                considerInventory = !ignoreOpenInventory
-            ),
-            priority = Priority.IMPORTANT_FOR_USAGE_2,
-            provider = this@ModuleKillAura
-        )
+        if (!shouldYieldToAutoBuff()) {
+            RotationManager.setRotationTarget(
+                rotations.toRotationTarget(
+                    rotation,
+                    entity,
+                    considerInventory = !ignoreOpenInventory
+                ),
+                priority = Priority.IMPORTANT_FOR_USAGE_2,
+                provider = this@ModuleKillAura
+            )
+        }
+
         return true
     }
 
@@ -432,6 +448,14 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         target: Entity? = null,
         itemStack: ItemStack = player.mainHandItem,
     ): Boolean {
+        if (target != null && !target.shouldBeAttacked()) {
+            return false
+        }
+
+        if (!isAllowedAttackItem(itemStack)) {
+            return false
+        }
+
         if (!itemStack.isItemEnabled(world.enabledFeatures())) {
             return false
         }
@@ -448,6 +472,14 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         val isInventoryBlockingAttack = (isInventoryOpen || isInContainerScreen) &&
             !ignoreOpenInventory && !simulateInventoryClosing
         return !isInventoryBlockingAttack
+    }
+
+    internal fun isAllowedAttackItem(itemStack: ItemStack): Boolean {
+        if (itemStack.isEmpty && KillAuraRequirements.EMPTY_HAND in requires) {
+            return true
+        }
+
+        return attackItems.isEmpty() || itemStack.item in attackItems
     }
 
     enum class RaycastMode(override val tag: String) : Tagged {

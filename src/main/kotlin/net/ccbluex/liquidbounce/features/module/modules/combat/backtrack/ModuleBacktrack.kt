@@ -37,14 +37,18 @@ import net.ccbluex.liquidbounce.features.blink.esp.BlinkEspWireframe
 import net.ccbluex.liquidbounce.features.module.ClientModule
 import net.ccbluex.liquidbounce.features.module.ModuleCategories
 import net.ccbluex.liquidbounce.features.module.modules.combat.velocity.mode.VelocityReduce
+import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.client.Chronometer
 import net.ccbluex.liquidbounce.utils.client.inGame
+import net.ccbluex.liquidbounce.utils.client.player
+import net.ccbluex.liquidbounce.utils.collection.itemSortedSetOf
 import net.ccbluex.liquidbounce.utils.combat.findEnemy
 import net.ccbluex.liquidbounce.utils.combat.shouldBeAttacked
 import net.ccbluex.liquidbounce.utils.entity.boxedDistanceTo
 import net.ccbluex.liquidbounce.utils.entity.rotation
 import net.ccbluex.liquidbounce.utils.entity.squareBoxedDistanceTo
-import net.ccbluex.liquidbounce.utils.entity.squaredBoxedDistanceTo
+import net.ccbluex.liquidbounce.utils.kotlin.random
+import net.ccbluex.liquidbounce.utils.raytracing.isLookingAtEntity
 import net.minecraft.network.protocol.common.ClientboundDisconnectPacket
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket
 import net.minecraft.network.protocol.game.ClientboundSetHealthPacket
@@ -55,16 +59,38 @@ import net.minecraft.network.protocol.game.ServerboundChatPacket
 import net.minecraft.sounds.SoundEvents
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.LivingEntity
+import net.minecraft.world.item.ItemStack
 import net.minecraft.world.phys.Vec3
+import kotlin.math.sqrt
 
 object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
 
+    // Quake Pro vertical FOV (110°), flat-ground walk/sprint speeds in blocks/s
+    private const val QUAKE_PRO_FOV = 110f
+    private const val WALK_SPEED = 4.317
+    private const val SPRINT_SPEED = 5.612
+
     private val range by floatRange("Range", 1f..3f, 0f..10f)
     val delay by intRange("Delay", 100..150, 0..1000, "ms")
-    private val nextBacktrackDelay by intRange("NextBacktrackDelay", 0..10, 0..2000, "ms")
-    private val trackingBuffer by int("TrackingBuffer", 500, 0..2000, "ms")
+    private val delayMode by enumChoice("DelayMode", DelayMode.DYNAMIC)
+    private val nextBacktrackDelay by intRange("NextBacktrackDelay", 0..10, 0..5000, "ms")
+    private val trackingBuffer by int("TrackingBuffer", 500, 0..5000, "ms")
+    private val backtrackDistance by floatRange("BacktrackDistance", 0f..4.5f, 0f..10f)
+    private val maxQueuedPackets by int("MaxQueuedPackets", 0, 0..1000)
     private val chance by float("Chance", 50f, 0f..100f, "%")
     private var currentChance = (0..100).random()
+
+    private val requires by multiEnumChoice<BacktrackRequirements>("Requires")
+    private val attackItems by items("Items", itemSortedSetOf())
+
+    private val requirementsMet
+        get() = requires.all { it.asBoolean }
+
+    private object SmartRelease : ToggleableValueGroup(this, "SmartRelease", true) {
+        val distanceGain by floatRange("DistanceGain", 0.03f..0.08f, 0f..1f)
+    }
+
+    private val smartRelease = tree(SmartRelease)
 
     private object PauseOnHurtTime : ToggleableValueGroup(this, "PauseOnHurtTime", false) {
         val hurtTime by int("HurtTime", 3, 0..10)
@@ -78,6 +104,14 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
     enum class Mode(override val tag: String) : Tagged {
         ATTACK("Attack"),
         RANGE("Range")
+    }
+
+    private enum class DelayMode(
+        override val tag: String,
+        override val tagAliases: List<String> = emptyList(),
+    ) : Tagged {
+        DYNAMIC("Dynamic", listOf("Constant")),
+        REVERSE_DYNAMIC("ReverseDynamic"),
     }
 
     private val espMode = choices("Esp", 2) {
@@ -100,6 +134,11 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
     private var target: Entity? = null
     private val position = TrackedEntityPosition()
 
+    private var lastTargetDistance = Double.NaN
+    private var lastDistanceSampleTime = 0L
+    private var currentDistanceRate = 0.0
+    private var currentSmartReleaseGain = SmartRelease.distanceGain.random().toDouble()
+
     var currentDelay = delay.random()
 
     @Suppress("unused")
@@ -114,7 +153,11 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
 
         val packet = event.packet
         val shouldCancel = shouldCancelPackets()
-        val hasQueuedIncoming = hasQueuedIncoming()
+        val incomingQueueSize = BlinkManager.queuedPacketCount(
+            TransferOrigin.INCOMING,
+            limit = maxQueuedPackets.takeIf { it > 0 } ?: 1
+        )
+        val hasQueuedIncoming = incomingQueueSize > 0
 
         if (packet == null) {
             if (shouldCancel || hasQueuedIncoming) {
@@ -124,6 +167,11 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
         }
 
         if (!hasQueuedIncoming && !shouldCancel) {
+            return@handler
+        }
+
+        if (maxQueuedPackets > 0 && incomingQueueSize >= maxQueuedPackets) {
+            event.action = BlinkManager.Action.FLUSH
             return@handler
         }
 
@@ -161,9 +209,13 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
         val target = target ?: return@handler
         val pos = position.handlePacket(packet, world, target)
         if (pos != null) {
-            // Is the target's actual position closer than its tracked position?
-            if (target.squareBoxedDistanceTo(player, pos) < target.squaredBoxedDistanceTo(player)) {
-                // Process all packets. We want to be able to hit the enemy, not the opposite.
+            val liveDistance = boxedDistanceToPlayer(target, pos)
+            val delayedDistance = boxedDistanceToPlayer(target)
+
+            if (isTrackedPositionOutsideDistance(liveDistance) ||
+                shouldSmartRelease(liveDistance, delayedDistance)
+            ) {
+                // Process all packets when the live server position is already the better hit.
                 event.action = BlinkManager.Action.FLUSH
                 // And stop right here. No need to cancel further packets.
                 return@handler
@@ -200,6 +252,13 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
             return@handler
         }
 
+        val target = target
+        if (target != null) {
+            updateDistanceRate(target)
+        } else {
+            resetDistanceTracking()
+        }
+
         val hadQueuedIncoming = hasQueuedIncoming()
 
         if (shouldCancelPackets()) {
@@ -213,7 +272,8 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
         }
 
         if (!hasQueuedIncoming()) {
-            currentDelay = delay.random()
+            currentDelay = calculateDelay(target)
+            currentSmartReleaseGain = SmartRelease.distanceGain.random().toDouble()
         }
     }
 
@@ -247,19 +307,22 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
     private fun processTarget(enemy: Entity) {
         shouldPause = enemy is LivingEntity && enemy.hurtTime >= PauseOnHurtTime.hurtTime
 
-        if (!shouldBacktrack(enemy)) {
-            return
-        }
-
         // Reset on enemy change
         if (enemy != target) {
             clear(resetChronometer = false)
 
             // Instantly set new position, so it does not look like the box was created with delay
             position.setBaseFrom(enemy)
+            currentChance = (0..100).random()
+        }
+
+        if (!shouldBacktrack(enemy)) {
+            clear()
+            return
         }
 
         target = enemy
+        currentDelay = calculateDelay(enemy)
     }
 
     override fun onEnabled() {
@@ -274,7 +337,7 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
         if (handlePackets && !clearOnly) {
             BlinkManager.flush(TransferOrigin.INCOMING)
         } else if (clearOnly) {
-            BlinkManager.packetQueue.removeIf { snapshot -> snapshot.origin == TransferOrigin.INCOMING }
+            BlinkManager.clear(TransferOrigin.INCOMING)
         }
 
         if (target != null && resetChronometer) {
@@ -283,6 +346,14 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
 
         target = null
         position.base = Vec3.ZERO
+        resetDistanceTracking()
+        currentSmartReleaseGain = SmartRelease.distanceGain.random().toDouble()
+    }
+
+    private fun resetDistanceTracking() {
+        lastTargetDistance = Double.NaN
+        lastDistanceSampleTime = 0L
+        currentDistanceRate = 0.0
     }
 
     private fun shouldBacktrack(target: Entity): Boolean {
@@ -297,9 +368,137 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
             player.tickCount > 10 &&
             currentChance < chance &&
             chronometer.hasElapsed() &&
+            requirementsMet &&
+            isAllowedAttackItem(player.mainHandItem) &&
             !shouldPause() &&
+            isTrackedPositionUseful(target) &&
             !attackChronometer.hasElapsed(lastAttackTimeToWork.toLong()) &&
             !VelocityReduce.backtrackBlocked
+    }
+
+    private fun calculateDelay(target: Entity?): Int {
+        val minDelay = delay.start
+        val maxDelay = delay.endInclusive
+
+        if (target == null) {
+            return minDelay
+        }
+
+        val factor = when (delayMode) {
+            DelayMode.DYNAMIC -> calculateDynamicDelayFactor(target)
+            DelayMode.REVERSE_DYNAMIC -> 1.0 - calculateDynamicDelayFactor(target)
+        }
+
+        return (minDelay + (maxDelay - minDelay) * factor).toInt().coerceIn(minDelay, maxDelay)
+    }
+
+    private fun calculateDynamicDelayFactor(target: Entity): Double {
+        val hiddenFromTarget = !isPlayerInTargetFov(target)
+        val distancingFactor = getDistancingFactor(target)
+
+        return (if (hiddenFromTarget) 1.0 else 0.0) * distancingFactor
+    }
+
+    private fun isPlayerInTargetFov(target: Entity): Boolean {
+        if (target !is LivingEntity) {
+            return true
+        }
+
+        val maxAngle = QUAKE_PRO_FOV / 2f
+        val eyes = target.eyePosition
+        val rotationToPlayer = Rotation.lookingAt(eyes, player.eyePosition)
+
+        if (target.rotation.angleTo(rotationToPlayer) > maxAngle) {
+            return false
+        }
+
+        val distance = target.boxedDistanceTo(player)
+        return isLookingAtEntity(
+            fromEntity = target,
+            toEntity = player,
+            rotation = target.rotation,
+            range = distance + 1.0,
+            throughWallsRange = 0.0,
+        ) != null
+    }
+
+    private fun getDistancingFactor(target: Entity): Double {
+        if (currentDistanceRate <= 0.0) {
+            return 0.0
+        }
+
+        return (currentDistanceRate / getExpectedDistancingSpeed(target)).coerceIn(0.0, 1.0)
+    }
+
+    private fun updateDistanceRate(target: Entity) {
+        val distance = target.boxedDistanceTo(player)
+        val now = System.currentTimeMillis()
+
+        if (lastTargetDistance.isNaN()) {
+            lastTargetDistance = distance
+            lastDistanceSampleTime = now
+            currentDistanceRate = 0.0
+            return
+        }
+
+        val elapsedMs = (now - lastDistanceSampleTime).coerceAtLeast(1L)
+        if (elapsedMs >= 50) {
+            currentDistanceRate = (distance - lastTargetDistance) / elapsedMs * 1000.0
+            lastTargetDistance = distance
+            lastDistanceSampleTime = now
+        }
+    }
+
+    private fun getExpectedDistancingSpeed(target: Entity): Double {
+        val sprinting = target is LivingEntity && target.isSprinting
+        return if (sprinting) SPRINT_SPEED else WALK_SPEED
+    }
+
+    private fun isTrackedPositionUseful(target: Entity): Boolean {
+        val trackedPos = position.base
+
+        if (trackedPos == Vec3.ZERO) {
+            return true
+        }
+
+        val liveDistance = boxedDistanceToPlayer(target, trackedPos)
+
+        if (isTrackedPositionOutsideDistance(liveDistance)) {
+            return false
+        }
+
+        if (!hasQueuedIncoming()) {
+            return true
+        }
+
+        return !shouldSmartRelease(liveDistance, boxedDistanceToPlayer(target))
+    }
+
+    private fun boxedDistanceToPlayer(target: Entity, targetPos: Vec3 = target.position()): Double {
+        return sqrt(target.squareBoxedDistanceTo(player, targetPos))
+    }
+
+    private fun isTrackedPositionOutsideDistance(liveDistance: Double): Boolean {
+        val minDistance = backtrackDistance.start
+        val maxDistance = backtrackDistance.endInclusive
+
+        return liveDistance < minDistance || liveDistance > maxDistance
+    }
+
+    private fun shouldSmartRelease(liveDistance: Double, delayedDistance: Double): Boolean {
+        if (!smartRelease.enabled) {
+            return false
+        }
+
+        return liveDistance + currentSmartReleaseGain < delayedDistance
+    }
+
+    internal fun isAllowedAttackItem(itemStack: ItemStack): Boolean {
+        if (itemStack.isEmpty && BacktrackRequirements.EMPTY_HAND in requires) {
+            return true
+        }
+
+        return attackItems.isEmpty() || itemStack.item in attackItems
     }
 
     fun isLagging() = running && hasQueuedIncoming()
@@ -310,6 +509,6 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
         target?.let { target -> target.isAlive && shouldBacktrack(target) } == true
 
     private fun hasQueuedIncoming() =
-        BlinkManager.packetQueue.any { snapshot -> snapshot.origin == TransferOrigin.INCOMING }
+        BlinkManager.hasQueuedPackets(TransferOrigin.INCOMING)
 
 }

@@ -9,7 +9,7 @@
 
     export let setting: ModuleSetting;
 
-    const cSetting = setting as FloatRangeSetting;
+    $: cSetting = setting as FloatRangeSetting;
 
     const dispatch = createEventDispatcher();
 
@@ -55,6 +55,13 @@
             dispatch("change");
         });
     });
+
+    $: if (apiSlider && cSetting) {
+        const currentVal = apiSlider.get() as number[];
+        if (Math.abs(currentVal[0] - cSetting.value.from) > 1e-4 || Math.abs(currentVal[1] - cSetting.value.to) > 1e-4) {
+            apiSlider.set([cSetting.value.from, cSetting.value.to]);
+        }
+    }
 </script>
 
 <div class="setting" class:has-suffix={cSetting.suffix !== ""}>

@@ -85,7 +85,7 @@ class SimulatedPlayer(
     private var fallFlying: Boolean,
     var onGround: Boolean,
     var horizontalCollision: Boolean,
-    private var verticalCollision: Boolean,
+    var verticalCollision: Boolean,
 
     private var wasTouchingWater: Boolean,
     private var isSwimming: Boolean,
@@ -482,7 +482,7 @@ class SimulatedPlayer(
         if (horizontalCollision || verticalCollision) {
             this.deltaMovement = Vec3(
                 if (xCollision) 0.0 else vec3d2.x,
-                if (onGround) 0.0 else vec3d2.y,
+                if (verticalCollision) 0.0 else vec3d2.y,
                 if (zCollision) 0.0 else vec3d2.z
             )
         }

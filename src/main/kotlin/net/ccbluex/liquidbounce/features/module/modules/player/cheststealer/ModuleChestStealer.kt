@@ -23,6 +23,7 @@ import net.ccbluex.fastutil.swap
 import net.ccbluex.liquidbounce.config.types.list.Tagged
 import net.ccbluex.liquidbounce.config.types.group.Mode
 import net.ccbluex.liquidbounce.config.types.group.ModeValueGroup
+import net.ccbluex.liquidbounce.config.types.group.ToggleableValueGroup
 import net.ccbluex.liquidbounce.event.events.ScheduleInventoryActionEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.ClientModule
@@ -31,6 +32,7 @@ import net.ccbluex.liquidbounce.features.module.modules.player.cheststealer.feat
 import net.ccbluex.liquidbounce.features.module.modules.player.cheststealer.features.FeatureSilentScreen
 import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.CleanupPlanGenerator
 import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.InventoryCleanupPlan
+import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.ItemAndComponents
 import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.ItemCategorization
 import net.ccbluex.liquidbounce.features.module.modules.player.invcleaner.ModuleInventoryCleaner
 import net.ccbluex.liquidbounce.utils.inventory.CheckScreenHandlerTypeValueGroup
@@ -50,8 +52,10 @@ import net.minecraft.client.gui.screens.Screen
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen
 import net.minecraft.client.gui.screens.inventory.InventoryScreen
 import net.minecraft.world.item.ItemStack
+import org.lwjgl.glfw.GLFW
 import java.util.concurrent.ThreadLocalRandom
 import kotlin.math.ceil
+import kotlin.math.min
 
 /**
  * ChestStealer module
@@ -62,7 +66,14 @@ import kotlin.math.ceil
 object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER) {
 
     private val inventoryConstrains = tree(InventoryConstraints())
-    private val autoClose by boolean("AutoClose", true)
+    private object AutoClose : ToggleableValueGroup(this, "AutoClose", true) {
+        val mode by enumChoice("Mode", CloseMode.PACKET)
+    }
+
+    private enum class CloseMode(override val tag: String) : Tagged {
+        PACKET("Packet"),
+        SIMULATION("Simulation")
+    }
 
     private val selectionMode = choices("SelectionMode", Distance, arrayOf(Distance, Index, Random)).apply(::tagBy)
     private val itemMoveMode by enumChoice("MoveMode", ItemMoveMode.QUICK_MOVE)
@@ -79,15 +90,34 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
     private val checkScreenHandlerType = tree(CheckScreenHandlerTypeValueGroup(this))
     private val checkScreenTitle = tree(CheckScreenTitleValueGroup(this))
 
+    private var lastClosedScreen: AbstractContainerScreen<*>? = null
+    private var closeAttempts = 0
+    private var currentScreen: AbstractContainerScreen<*>? = null
+    private var screenTicks = 0
+
     init {
         tree(FeatureChestAura)
         tree(FeatureSilentScreen)
+        tree(AutoClose)
     }
 
     @Suppress("unused")
     private val scheduleInventoryAction = handler<ScheduleInventoryActionEvent> { event ->
         // Check if we are in a chest screen
-        val screen = getChestScreen() ?: return@handler
+        val screen = getChestScreen() ?: run {
+            currentScreen = null
+            screenTicks = 0
+            lastClosedScreen = null
+            closeAttempts = 0
+            return@handler
+        }
+
+        if (screen !== currentScreen) {
+            currentScreen = screen
+            screenTicks = 0
+        } else {
+            screenTicks++
+        }
 
         val cleanupPlan = createCleanupPlan(screen)
         // Quick swap items in hotbar (i.e. swords), some servers hate them
@@ -96,6 +126,10 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
         }
 
         val itemsToCollect = cleanupPlan.usefulItems.filterIsInstanceTo(ArrayList<ContainerItemSlot>())
+        if (itemsToCollect.isNotEmpty()) {
+            lastClosedScreen = null
+            closeAttempts = 0
+        }
 
         val stillRequiredSpace = getStillRequiredSpace(cleanupPlan, itemsToCollect.size)
         selectionMode.activeMode.process(itemsToCollect)
@@ -103,9 +137,18 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
         val targetBlacklist = ObjectOpenHashSet<ItemSlot>()
 
         for (slot in itemsToCollect) {
-            val moveActions = Slots.HotbarAndInventory.findPossiblePickActions(screen, slot, targetBlacklist)
+            if (slot in targetBlacklist) {
+                continue
+            }
 
-            if (moveActions != null) {
+            val moveActions = Slots.HotbarAndInventory.findPossiblePickActions(
+                screen,
+                slot,
+                itemsToCollect,
+                targetBlacklist
+            )
+
+            if (!moveActions.isNullOrEmpty()) {
                 event.schedule(
                     inventoryConstrains, moveActions,
                     /**
@@ -114,18 +157,36 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
                      */
                     ItemCategorization.Default.getItemFacets(slot).maxOf { it.category.type.allocationPriority }
                 )
-            } else if (stillRequiredSpace > 0) {
-                // Throw useless items
-                event.schedule(
-                    inventoryConstrains,
-                    throwItem(cleanupPlan, screen, targetBlacklist) ?: break
+                return@handler
+            }
+
+            if (stillRequiredSpace > 0) {
+                val throwActions = throwItem(cleanupPlan, screen, targetBlacklist) ?: continue
+                event.schedule(inventoryConstrains, throwActions)
+                return@handler
+            }
+        }
+
+        if (AutoClose.mode == CloseMode.SIMULATION && AutoClose.enabled) {
+            mc.execute {
+                (mc.keyboardHandler as net.ccbluex.liquidbounce.injection.mixins.minecraft.client.MixinKeyboardHandlerAccessor).invokeKeyPress(
+                    mc.window.handle(),
+                    GLFW.GLFW_PRESS,
+                    net.minecraft.client.input.KeyEvent(GLFW.GLFW_KEY_ESCAPE, 0, 0)
                 )
             }
         }
 
         // Check if stealing the chest was completed
-        if (autoClose && itemsToCollect.isEmpty()) {
-            event.schedule(inventoryConstrains, InventoryAction.CloseScreen(screen))
+        if (AutoClose.enabled && screenTicks > 0) {
+            val shouldClose = itemsToCollect.isEmpty()
+
+            if (shouldClose) {
+                when (AutoClose.mode) {
+                    CloseMode.PACKET -> event.schedule(inventoryConstrains, InventoryAction.CloseScreen(screen))
+                    else -> {}
+                }
+            }
         }
     }
 
@@ -136,19 +197,44 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
     private fun Iterable<ItemSlot>.findPossiblePickActions(
         screen: AbstractContainerScreen<*>,
         from: ItemSlot,
+        itemsToCollect: List<ContainerItemSlot>,
         targetBlacklist: MutableSet<ItemSlot>? = null,
-    ): List<InventoryAction.Click>? {
+    ): List<InventoryAction>? {
         val fromStack = from.itemStack
         val remaining = mergeableCapacityFor(fromStack, blacklist = targetBlacklist)
 
         // Impossible to pick any item into inventory
         if (remaining == 0) return null
 
-        targetBlacklist?.add(from)
         return when (itemMoveMode) {
-            ItemMoveMode.QUICK_MOVE -> listOf(InventoryAction.Click.performQuickMove(screen, from))
+            ItemMoveMode.QUICK_MOVE -> {
+                targetBlacklist?.add(from)
+                listOf(InventoryAction.Click.performQuickMove(screen, from))
+            }
+
+            ItemMoveMode.BULK_MOVE -> buildList {
+                var remainingCapacity = remaining
+                for (slot in itemsToCollect) {
+                    if (remainingCapacity <= 0) {
+                        break
+                    }
+
+                    val stack = slot.itemStack
+                    if ((targetBlacklist != null && slot in targetBlacklist) || !stack.isMergeable(fromStack)) {
+                        continue
+                    }
+
+                    targetBlacklist?.add(slot)
+                    this += slot
+                    remainingCapacity -= min(stack.count, remainingCapacity)
+                }
+            }.takeIf { it.isNotEmpty() }?.let { slots ->
+                listOf(InventoryAction.BulkQuickMove.performBulkQuickMove(screen, slots))
+            }
 
             ItemMoveMode.DRAG_AND_DROP -> {
+                targetBlacklist?.add(from)
+
                 // Never empty
                 val targets = filterTo(ArrayDeque()) {
                     (targetBlacklist == null || it !in targetBlacklist) &&
@@ -305,8 +391,13 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
     private fun createCleanupPlan(screen: AbstractContainerScreen<*>): InventoryCleanupPlan {
         val cleanupPlan = if (!ModuleInventoryCleaner.running) {
             val usefulItems = screen.findItemsInContainer()
+            val availableItems = findNonEmptySlotsInInventory() + usefulItems
 
-            InventoryCleanupPlan(ObjectOpenHashSet(usefulItems), mutableListOf(), hashMapOf())
+            InventoryCleanupPlan(
+                ObjectOpenHashSet(usefulItems),
+                mutableListOf(),
+                groupMergeableItems(availableItems),
+            )
         } else {
             val availableItems = findNonEmptySlotsInInventory() + screen.findItemsInContainer()
 
@@ -314,6 +405,27 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
         }
 
         return cleanupPlan
+    }
+
+    private fun groupMergeableItems(
+        availableItems: List<ItemSlot>,
+    ): MutableMap<ItemAndComponents, MutableList<ItemSlot>> {
+        val itemsByType = hashMapOf<ItemAndComponents, MutableList<ItemSlot>>()
+
+        for (availableSlot in availableItems) {
+            val stack = availableSlot.itemStack
+
+            if (stack.isEmpty) {
+                continue
+            }
+            if (!stack.isStackable || stack.count >= stack.maxStackSize) {
+                continue
+            }
+
+            itemsByType.computeIfAbsent(ItemAndComponents(stack)) { mutableListOf() }.add(availableSlot)
+        }
+
+        return itemsByType
     }
 
     private sealed class SelectionMode(name: String) : Mode(name) {
@@ -421,8 +533,12 @@ object ModuleChestStealer : ClientModule("ChestStealer", ModuleCategories.PLAYER
             checkScreenHandlerType.isValid(this) && checkScreenTitle.isValid(this)
     }
 
-    private enum class ItemMoveMode(override val tag: String) : Tagged {
+    private enum class ItemMoveMode(
+        override val tag: String,
+        override val tagAliases: List<String> = emptyList(),
+    ) : Tagged {
         QUICK_MOVE("QuickMove"),
+        BULK_MOVE("BulkMove", listOf("MassMoveIdenticalItems")),
         DRAG_AND_DROP("DragAndDrop"),
     }
 

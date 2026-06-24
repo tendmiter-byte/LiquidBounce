@@ -22,10 +22,12 @@ package net.ccbluex.liquidbounce.utils.inventory
 import net.ccbluex.liquidbounce.utils.client.SilentHotbar
 import net.ccbluex.liquidbounce.utils.client.interaction
 import net.ccbluex.liquidbounce.utils.client.mc
+import net.ccbluex.liquidbounce.utils.client.network
 import net.ccbluex.liquidbounce.utils.client.player
 import net.ccbluex.liquidbounce.utils.entity.useItem
 import net.ccbluex.liquidbounce.utils.kotlin.Priority
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen
+import net.minecraft.network.protocol.game.ServerboundContainerClosePacket
 import net.minecraft.world.entity.player.Inventory
 import net.minecraft.world.inventory.ContainerInput
 import net.minecraft.world.item.ItemStack
@@ -174,6 +176,50 @@ sealed interface InventoryAction {
     }
 
     @JvmRecord
+    data class BulkQuickMove(
+        val screen: AbstractContainerScreen<*>? = null,
+        val slots: List<ItemSlot>,
+    ) : InventoryAction {
+
+        companion object {
+
+            @JvmStatic
+            fun performBulkQuickMove(
+                screen: AbstractContainerScreen<*>? = null,
+                slots: List<ItemSlot>,
+            ) = BulkQuickMove(screen, slots)
+
+        }
+
+        override fun canPerformAction(inventoryConstraints: InventoryConstraints): Boolean {
+            if (slots.isEmpty()) {
+                return false
+            }
+
+            val sampleClick = Click.performQuickMove(screen, slots.first())
+            if (!sampleClick.canPerformAction(inventoryConstraints)) {
+                return false
+            }
+
+            return slots.all { it.getIdForServer(screen) != null }
+        }
+
+        override fun performAction(): Boolean {
+            val syncId = screen?.syncId ?: 0
+            for (slot in slots) {
+                val slotId = slot.getIdForServer(screen) ?: return false
+                interaction.handleContainerInput(syncId, slotId, 0, ContainerInput.QUICK_MOVE, player)
+                InventoryManager.lastClickedSlot = slotId
+            }
+
+            return true
+        }
+
+        override fun requiresPlayerInventoryOpen() = screen == null
+
+    }
+
+    @JvmRecord
     data class UseItem @JvmOverloads constructor(
         val hotbarItemSlot: HotbarItemSlot,
         val requester: Any? = null,
@@ -197,12 +243,16 @@ sealed interface InventoryAction {
         val screen: AbstractContainerScreen<*>,
     ) : InventoryAction {
 
-        // Check if current handler is the same as the screen we want to close
         override fun canPerformAction(inventoryConstraints: InventoryConstraints) =
-            player.containerMenu.containerId == screen.syncId
+            mc.gui.screen() === screen
 
         override fun performAction(): Boolean {
-            player.closeContainer()
+            if (mc.gui.screen() !== screen) {
+                return false
+            }
+
+            network.send(ServerboundContainerClosePacket(screen.syncId))
+            player.clientSideCloseContainer()
             return true
         }
 

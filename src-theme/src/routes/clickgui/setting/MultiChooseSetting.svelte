@@ -9,8 +9,8 @@
     export let setting: ModuleSetting;
     export let path: string;
 
-    const cSetting = setting as MultiChooseSetting;
-    const thisPath = `${path}.${cSetting.name}`;
+    $: cSetting = setting as MultiChooseSetting;
+    $: thisPath = `${path}.${cSetting.name}`;
 
     let errorValue: string | null = null;
     let timeoutId: ReturnType<typeof setTimeout>;

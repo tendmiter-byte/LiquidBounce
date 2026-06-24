@@ -19,16 +19,16 @@
 package net.ccbluex.liquidbounce.features.module.modules.combat
 
 import net.ccbluex.liquidbounce.config.types.list.Tagged
-import net.ccbluex.liquidbounce.event.events.MouseRotationEvent
 import net.ccbluex.liquidbounce.event.events.RotationUpdateEvent
-import net.ccbluex.liquidbounce.event.events.WorldRenderEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.ClientModule
 import net.ccbluex.liquidbounce.features.module.ModuleCategories
-import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.KillAuraRequirements
+import net.ccbluex.liquidbounce.features.module.modules.combat.aimbot.AimbotArtificialBoundingBox
+import net.ccbluex.liquidbounce.features.module.modules.combat.aimbot.AimbotRequirements
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug.debugGeometry
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
+import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.RotationTarget
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.aiming.data.RotationWithVector
@@ -40,15 +40,21 @@ import net.ccbluex.liquidbounce.utils.aiming.point.PointTracker
 import net.ccbluex.liquidbounce.utils.aiming.preference.LeastDifferencePreference
 import net.ccbluex.liquidbounce.utils.aiming.utils.RotationUtil
 import net.ccbluex.liquidbounce.utils.aiming.utils.raytraceBox
-import net.ccbluex.liquidbounce.utils.aiming.utils.setRotation
-import net.ccbluex.liquidbounce.utils.client.Timer
+import net.ccbluex.liquidbounce.utils.client.player
+import net.ccbluex.liquidbounce.utils.collection.itemSortedSetOf
 import net.ccbluex.liquidbounce.utils.combat.TargetPriority
 import net.ccbluex.liquidbounce.utils.combat.TargetTracker
+import net.ccbluex.liquidbounce.utils.entity.PositionExtrapolation
+import net.ccbluex.liquidbounce.utils.entity.getBoundingBoxAt
+import net.ccbluex.liquidbounce.utils.entity.interpolateCurrentPosition
 import net.ccbluex.liquidbounce.utils.entity.rotation
 import net.ccbluex.liquidbounce.utils.inventory.InventoryManager
+import net.ccbluex.liquidbounce.utils.kotlin.Priority
+import net.ccbluex.liquidbounce.utils.math.firstHit
 import net.ccbluex.liquidbounce.utils.render.TargetRenderer
-import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen
 import net.minecraft.world.entity.Entity
+import net.minecraft.world.item.ItemStack
+import net.minecraft.world.phys.AABB
 
 /**
  * Aimbot module
@@ -57,19 +63,41 @@ import net.minecraft.world.entity.Entity
  */
 object ModuleAimbot : ClientModule("Aimbot", ModuleCategories.COMBAT, aliases = listOf("AimAssist", "AutoAim")) {
 
-    private val range = float("Range", 4.2f, 1f..8f)
+    private val activationMode by enumChoice("ActivationMode", ActivationMode.FOV)
+    private val axis by multiEnumChoice<Axis>("Axis", Axis.HORIZONTAL, Axis.VERTICAL)
 
-    val targetTracker = tree(TargetTracker(TargetPriority.DIRECTION, range = range))
+    private val range = float("Range", 4.2f, 1f..10f)
 
-    init {
-        tree(TargetRenderer(this, targetTracker))
-    }
+    val targetTracker = tree(
+        TargetTracker(
+            defaultPriority = TargetPriority.DIRECTION,
+            range = range,
+            defaultFov = 45f,
+        )
+    )
+
+    private val artificialBoundingBox = tree(
+        AimbotArtificialBoundingBox(
+            owner = this,
+            targets = targetTracker::targets,
+            shouldDraw = { activationMode == ActivationMode.ARTIFICIAL_BOUNDING_BOX },
+            getActivationBox = { entity, partialTicks ->
+                applyArtificialExpansion(getRenderAimBox(entity, partialTicks))
+            },
+        )
+    )
+
     private val pointTracker = tree(PointTracker(this))
 
-    private val requires by multiEnumChoice<KillAuraRequirements>("Requires")
+    private val requires by multiEnumChoice<AimbotRequirements>("Requires")
+    private val attackItems by items("Items", itemSortedSetOf())
 
     private val requirementsMet
-        get() = mc.gui.screen() == null && requires.all { it.asBoolean }
+        get() = (IgnoreOpened.SCREEN in ignores || mc.gui.screen() == null) &&
+            requires.all { it.asBoolean } &&
+            isAllowedAttackItem(player.mainHandItem)
+
+    private val movementCorrection by enumChoice("MovementCorrection", MovementCorrection.SILENT)
 
     private var angleSmooth = modes(this, "AngleSmooth") {
         arrayOf(
@@ -79,36 +107,40 @@ object ModuleAimbot : ClientModule("Aimbot", ModuleCategories.COMBAT, aliases = 
         )
     }
 
-    private val axis by multiEnumChoice<Axis>("Axis", Axis.HORIZONTAL, Axis.VERTICAL)
-
     private val ignores by multiEnumChoice<IgnoreOpened>("Ignore")
 
-    private var targetRotation: Rotation? = null
-    private var playerRotation: Rotation? = null
+    init {
+        tree(TargetRenderer(this, targetTracker))
+    }
 
     @Suppress("unused", "ComplexCondition")
     private val tickHandler = handler<RotationUpdateEvent> { _ ->
-        playerRotation = player.rotation
-
         if (!requirementsMet) {
             targetTracker.reset()
-            targetRotation = null
             return@handler
         }
 
-        targetRotation = findNextTargetRotation()?.let { (target, rotation) ->
-            angleSmooth.activeMode.process(
+        val nextTargetRotation = findNextTargetRotation()
+
+        nextTargetRotation?.let { (target, rotation) ->
+            val currentRotation = player.rotation
+            val filteredRotation = Rotation(
+                yaw = if (Axis.HORIZONTAL in axis) rotation.rotation.yaw else currentRotation.yaw,
+                pitch = if (Axis.VERTICAL in axis) rotation.rotation.pitch else currentRotation.pitch,
+            )
+
+            RotationManager.setRotationTarget(
                 RotationTarget(
-                    rotation = rotation.rotation,
+                    rotation = filteredRotation,
                     entity = target,
                     processors = listOf(angleSmooth.activeMode),
                     ticksUntilReset = 1,
                     resetThreshold = 1f,
-                    considerInventory = true,
-                    movementCorrection = MovementCorrection.CHANGE_LOOK
+                    considerInventory = IgnoreOpened.CONTAINER !in ignores,
+                    movementCorrection = movementCorrection
                 ),
-                player.rotation,
-                rotation.rotation
+                Priority.IMPORTANT_FOR_USAGE_1,
+                this
             )
         }
 
@@ -120,59 +152,15 @@ object ModuleAimbot : ClientModule("Aimbot", ModuleCategories.COMBAT, aliases = 
         targetTracker.reset()
     }
 
-    @Suppress("unused")
-    private val renderHandler = handler<WorldRenderEvent> { event ->
-        val matrixStack = event.matrixStack
-        val partialTicks = event.partialTicks
-        val target = targetTracker.target ?: return@handler
-
-        if (IgnoreOpened.SCREEN !in ignores && mc.gui.screen() != null) {
-            return@handler
-        }
-
-        if (IgnoreOpened.CONTAINER !in ignores && (InventoryManager.isInventoryOpen ||
-                mc.gui.screen() is AbstractContainerScreen<*>)) {
-            return@handler
-        }
-
-        lookAt(partialTicks)
-    }
-
-    @Suppress("unused")
-    private val mouseMovement = handler<MouseRotationEvent> { event ->
-        fun updateRotation(rotation: Rotation): Rotation =
-            RotationUtil.applyMouseTurnDelta(rotation, event.cursorDeltaX, event.cursorDeltaY)
-
-        playerRotation?.let { rotation ->
-            playerRotation = updateRotation(rotation)
-        }
-
-        targetRotation?.let { rotation ->
-            targetRotation = updateRotation(rotation)
-        }
-    }
-
-    /**
-     * Looks at the target rotation, with interpolation based on the timer speed and partial ticks to make it smooth.
-     */
-    private fun lookAt(partialTicks: Float) {
-        val playerRotation = playerRotation ?: return
-        val targetRotation = targetRotation ?: return
-        val timerSpeed = Timer.timerSpeed
-        val interpolatedRotation = playerRotation.interpolateTo(targetRotation, timerSpeed * partialTicks)
-
-        player.setRotation(
-            Rotation(
-                yaw = if (Axis.HORIZONTAL in axis) interpolatedRotation.yaw else playerRotation.yaw,
-                pitch = if (Axis.VERTICAL in axis) interpolatedRotation.pitch else playerRotation.pitch,
-            )
-        )
-    }
 
     private fun findNextTargetRotation(): Pair<Entity, RotationWithVector>? {
         for (entity in targetTracker.targets()) {
             val eyes = player.eyePosition
             val point = pointTracker.findPoint(eyes, entity)
+
+            if (!shouldActivateOn(point.box)) {
+                continue
+            }
 
             debugGeometry("Box") { ModuleDebug.DebuggedBox(point.box, Color4b.ORANGE.with(a = 90)) }
             debugGeometry("Point") { ModuleDebug.DebuggedPoint(point.pos, Color4b.WHITE, size = 0.1) }
@@ -194,6 +182,53 @@ object ModuleAimbot : ClientModule("Aimbot", ModuleCategories.COMBAT, aliases = 
         return null
     }
 
+    private fun shouldActivateOn(aimBox: AABB): Boolean {
+        return when (activationMode) {
+            ActivationMode.ARTIFICIAL_BOUNDING_BOX -> isClientAimingAt(applyArtificialExpansion(aimBox))
+
+            ActivationMode.FOV -> {
+                val rotationToEntity = Rotation.lookingAt(aimBox.center, player.eyePosition)
+                targetTracker.isAngleWithinFov(player.rotation.angleTo(rotationToEntity))
+            }
+        }
+    }
+
+    private fun applyArtificialExpansion(box: AABB): AABB {
+        val expansion = artificialBoundingBox.size.toDouble()
+
+        return when {
+            Axis.HORIZONTAL in axis && Axis.VERTICAL in axis -> box.inflate(expansion)
+            Axis.HORIZONTAL in axis -> box.inflate(expansion, 0.0, expansion)
+            Axis.VERTICAL in axis -> box.inflate(0.0, expansion, 0.0)
+            else -> box
+        }
+    }
+
+    private fun getRenderAimBox(entity: Entity, partialTicks: Float): AABB {
+        val extrapolatedPos = PositionExtrapolation.getBestForEntity(entity).getPositionInTicks(0.0)
+        val interpolationOffset = entity.interpolateCurrentPosition(partialTicks)
+            .subtract(entity.position())
+
+        return entity.getBoundingBoxAt(extrapolatedPos.add(interpolationOffset))
+            .inflate(entity.pickRadius.toDouble())
+    }
+
+    private fun isClientAimingAt(box: AABB): Boolean {
+        val eyes = player.eyePosition
+        val direction = player.rotation.directionVector
+        val end = eyes.add(direction.scale(targetTracker.maxRange.toDouble()))
+
+        return box.firstHit(eyes, end) != null
+    }
+
+    internal fun isAllowedAttackItem(itemStack: ItemStack): Boolean {
+        if (itemStack.isEmpty && AimbotRequirements.EMPTY_HAND in requires) {
+            return true
+        }
+
+        return attackItems.isEmpty() || itemStack.item in attackItems
+    }
+
     private enum class IgnoreOpened(
         override val tag: String
     ) : Tagged {
@@ -204,5 +239,10 @@ object ModuleAimbot : ClientModule("Aimbot", ModuleCategories.COMBAT, aliases = 
     private enum class Axis(override val tag: String) : Tagged {
         HORIZONTAL("Horizontal"),
         VERTICAL("Vertical")
+    }
+
+    private enum class ActivationMode(override val tag: String) : Tagged {
+        ARTIFICIAL_BOUNDING_BOX("ArtificialBoundingBox"),
+        FOV("FOV")
     }
 }

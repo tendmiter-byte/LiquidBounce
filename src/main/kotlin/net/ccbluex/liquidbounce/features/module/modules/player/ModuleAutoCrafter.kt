@@ -107,7 +107,7 @@ object ModuleAutoCrafter : ClientModule("AutoCrafter", ModuleCategories.PLAYER) 
                         }
 
                         OnFull.CLOSE_SCREEN -> {
-                            player.closeContainer()
+                            player.clientSideCloseContainer()
                             return@tickHandler
                         }
 

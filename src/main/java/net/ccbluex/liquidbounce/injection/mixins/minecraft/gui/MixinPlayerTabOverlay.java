@@ -28,6 +28,7 @@ import com.llamalad7.mixinextras.sugar.Local;
 import com.llamalad7.mixinextras.sugar.ref.LocalIntRef;
 import net.ccbluex.liquidbounce.features.misc.FriendManager;
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleAntiStaff;
+import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleTargetLock;
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleBetterTab;
 import net.ccbluex.liquidbounce.features.module.modules.misc.Visibility;
 import net.ccbluex.liquidbounce.utils.text.PlainText;
@@ -175,6 +176,8 @@ public abstract class MixinPlayerTabOverlay {
                 drawColor = highlight.getSelf().getColor().argb();
             } else if (highlight.getFriends().getRunning() && FriendManager.INSTANCE.isFriend(entry.getProfile().name())) {
                 drawColor = highlight.getFriends().getColor().argb();
+            } else if (highlight.getTargets().getRunning() && ModuleTargetLock.isListedUsername(entry.getProfile().name())) {
+                drawColor = highlight.getTargets().getColor().argb();
             } else if (others.getRunning() && others.getFilter().isInFilter(entry)) {
                 drawColor = others.getColor().argb();
             }

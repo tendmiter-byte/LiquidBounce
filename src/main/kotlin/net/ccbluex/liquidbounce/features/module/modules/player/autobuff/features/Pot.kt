@@ -81,11 +81,26 @@ internal object Pot : StatusEffectBasedBuff("Pot") {
     private val doNotBenefitOthers by boolean("DoNotBenefitOthers", true)
 
     private val allowLingering by boolean("AllowLingering", false)
+    private val dynamicPitch by boolean("DynamicPitch", true)
 
     override suspend fun execute(slot: HotbarItemSlot) {
-        // TODO: Use movement prediction to splash against walls and away from the player
-        //   See https://github.com/CCBlueX/LiquidBounce/issues/2051
-        var rotation = Rotation(player.yRot, (85f..90f).random())
+        val movement = player.deltaMovement
+        val speedSq = movement.x * movement.x + movement.z * movement.z
+        
+        val yaw = if (speedSq > 0.001) {
+            Math.toDegrees(kotlin.math.atan2(-movement.x, movement.z)).toFloat()
+        } else {
+            player.yRot
+        }
+
+        val pitch = if (dynamicPitch && speedSq > 0.001) {
+            val speed = kotlin.math.sqrt(speedSq).toFloat()
+            (90f - speed * 40f).coerceIn(75f, 90f)
+        } else {
+            (85f..90f).random()
+        }
+
+        var rotation = Rotation(yaw, pitch)
 
         when (ModuleAutoBuff.Rotations.rotationTiming) {
             NORMAL -> {
@@ -97,7 +112,8 @@ internal object Pot : StatusEffectBasedBuff("Pot") {
                 )
 
                 tickUntil {
-                    !inGame || (currentRotation ?: player.rotation).pitch > 85
+                    ModuleAutoBuff.refreshCombatPause()
+                    !inGame || (currentRotation ?: player.rotation).pitch >= rotation.pitch - 1f
                 }
 
                 rotation = rotation.normalize()

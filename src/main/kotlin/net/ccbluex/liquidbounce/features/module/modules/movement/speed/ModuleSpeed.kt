@@ -18,6 +18,7 @@
  */
 package net.ccbluex.liquidbounce.features.module.modules.movement.speed
 
+import net.ccbluex.liquidbounce.event.tickHandler
 import net.ccbluex.liquidbounce.config.types.group.Mode
 import net.ccbluex.liquidbounce.config.types.group.ModeValueGroup
 import net.ccbluex.liquidbounce.config.types.group.ToggleableValueGroup
@@ -52,6 +53,8 @@ import net.ccbluex.liquidbounce.features.module.modules.movement.speed.modes.vul
 import net.ccbluex.liquidbounce.features.module.modules.movement.speed.modes.watchdog.SpeedHypixelBHop
 import net.ccbluex.liquidbounce.features.module.modules.movement.speed.modes.watchdog.SpeedHypixelLowHop
 import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
+import net.ccbluex.liquidbounce.utils.entity.moving
+import net.ccbluex.liquidbounce.utils.math.anyNotEmpty
 import net.ccbluex.liquidbounce.utils.client.inGame
 import net.ccbluex.liquidbounce.utils.combat.CombatManager
 import java.util.function.BooleanSupplier
@@ -107,6 +110,7 @@ object ModuleSpeed : ClientModule("Speed", ModuleCategories.MOVEMENT) {
     private val notCondition by multiEnumChoice("Not", NotCondition.SCAFFOLD)
 
     private val avoidEdgeBump by boolean("AvoidEdgeBump", true)
+    private val avoidHeadCollision by boolean("AvoidHeadCollision", true)
 
     init {
         tree(OnlyInCombat)
@@ -187,6 +191,10 @@ object ModuleSpeed : ClientModule("Speed", ModuleCategories.MOVEMENT) {
         }
 
         if (avoidEdgeBump && SpeedAntiCornerBump.shouldDelayJump()) {
+            return true
+        }
+
+        if (avoidHeadCollision && SpeedAvoidHeadCollision.shouldDelayJump()) {
             return true
         }
 

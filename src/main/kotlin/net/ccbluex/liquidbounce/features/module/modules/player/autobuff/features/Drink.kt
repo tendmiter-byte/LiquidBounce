@@ -22,6 +22,7 @@ package net.ccbluex.liquidbounce.features.module.modules.player.autobuff.feature
 import net.ccbluex.liquidbounce.event.events.KeybindIsPressedEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.event.tickUntil
+import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.ModuleAutoBuff
 import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.StatusEffectBasedBuff
 import net.ccbluex.liquidbounce.utils.inventory.HotbarItemSlot
 import net.minecraft.world.item.ItemStack
@@ -34,7 +35,10 @@ internal object Drink : StatusEffectBasedBuff("Drink") {
 
     override suspend fun execute(slot: HotbarItemSlot) {
         forceUseKey = true
-        tickUntil { !passesRequirements }
+        tickUntil {
+            ModuleAutoBuff.refreshCombatPause()
+            !passesRequirements
+        }
         forceUseKey = false
     }
 

@@ -71,7 +71,7 @@ object InventoryMoveBlinkFeature : ToggleableValueGroup(ModuleInventoryMove, "Bl
     @Suppress("unused")
     private val tickHandler = tickHandler {
         if (mc.gui.screen() is AbstractContainerScreen<*> && chronometer.hasElapsed(maximumTime.toLong())) {
-            player.closeContainer()
+            player.clientSideCloseContainer()
             notification(
                 "InventoryMove",
                 ModuleBlink.message("blinkEnd"),

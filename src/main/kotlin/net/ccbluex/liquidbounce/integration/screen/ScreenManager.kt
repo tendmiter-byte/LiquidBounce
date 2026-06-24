@@ -373,7 +373,7 @@ object ScreenManager : EventListener {
      * Checks if the given screen is an active client screen.
      */
     @JvmStatic
-    fun isClientScreen(screen: Screen?) = screen is CustomSharedMinecraftScreen
+    fun isClientScreen(screen: Screen?) = (screen is CustomSharedMinecraftScreen && screen.screenType != CustomScreenType.CONTAINER && screen.screenType != CustomScreenType.INVENTORY)
         || screen is CustomStandaloneMinecraftScreen
         || screen is InternetExplorerScreen
 

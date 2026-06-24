@@ -47,7 +47,7 @@ public abstract class MixinEntityHitboxDebugRenderer {
     )
     private AABB getBoundingBox(AABB original, @Local(argsOnly = true, name = "entity") Entity entity) {
         var moduleHitBox = ModuleHitbox.INSTANCE;
-        if (entity != null && moduleHitBox.getRunning()
+        if (entity != null && moduleHitBox.shouldApply()
             && moduleHitBox.getApplyToDebugHitbox() && CombatExtensionsKt.shouldBeAttacked(entity)) {
             var expansion = moduleHitBox.getSize();
             return original.inflate(expansion);

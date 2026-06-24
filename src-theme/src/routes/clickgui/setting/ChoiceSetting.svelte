@@ -10,15 +10,13 @@
     export let setting: ModuleSetting;
     export let path: string;
 
-    const cSetting = setting as ChoiceSetting;
-    const thisPath = `${path}.${cSetting.name}`;
+    $: cSetting = setting as ChoiceSetting;
+    $: thisPath = `${path}.${cSetting.name}`;
 
     const dispatch = createEventDispatcher();
-    const options = Object.keys(cSetting.choices);
+    $: options = Object.keys(cSetting.choices);
     let expanded = localStorage.getItem(thisPath) === "true";
 
-    let nestedSettings = cSetting.choices[cSetting.active]
-        .value as ModuleSetting[];
     $: nestedSettings = cSetting.choices[cSetting.active]
         .value as ModuleSetting[];
 

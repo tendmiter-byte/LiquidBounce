@@ -100,11 +100,14 @@ import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleBookBot
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleEasyPearl
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleElytraSwap
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleFlagCheck
+import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleGhostItemFix
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleGUICloser
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleInventoryTracker
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleItemScroller
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleMacros
-import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleMiddleClickAction
+import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleM3Action
+import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleM4Action
+import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleM5Action
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleNotifier
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModulePacketLogger
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleSpammer
@@ -523,6 +526,7 @@ object ModuleManager : EventListener, Collection<ClientModule> by modules {
 
             // Misc
             ModuleAutoConfig,
+            ModuleGhostItemFix,
             ModuleGUICloser,
             ModuleBookBot,
             ModuleAntiBot,
@@ -531,7 +535,9 @@ object ModuleManager : EventListener, Collection<ClientModule> by modules {
             ModuleBetterChat,
             ModuleElytraTarget,
             ModuleMacros,
-            ModuleMiddleClickAction,
+            ModuleM3Action,
+            ModuleM4Action,
+            ModuleM5Action,
             ModuleInventoryTracker,
             ModuleNameProtect,
             ModuleTextFieldProtect,

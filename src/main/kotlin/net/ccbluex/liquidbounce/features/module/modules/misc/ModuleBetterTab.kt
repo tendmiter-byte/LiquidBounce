@@ -65,6 +65,7 @@ object ModuleBetterTab : ClientModule("BetterTab", ModuleCategories.RENDER) {
 
         val self = tree(HighlightColored("Self", Color4b(50, 193, 50, 80)))
         val friends = tree(HighlightColored("Friends", Color4b(16, 89, 203, 80)))
+        val targets = tree(HighlightColored("Targets", Color4b(203, 50, 50, 80)))
         val others = tree(Others(Color4b(35, 35, 35, 80)))
     }
 

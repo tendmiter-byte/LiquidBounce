@@ -232,6 +232,30 @@ object BlinkManager : EventListener, ValueGroup("BlinkManager") {
         flush { it.origin == origin }
     }
 
+    fun queuedPacketCount(origin: TransferOrigin, limit: Int = Int.MAX_VALUE): Int {
+        var count = 0
+
+        for (snapshot in packetQueue) {
+            if (snapshot.origin != origin) {
+                continue
+            }
+
+            count += 1
+            if (count >= limit) {
+                break
+            }
+        }
+
+        return count
+    }
+
+    fun hasQueuedPackets(origin: TransferOrigin) =
+        packetQueue.any { snapshot -> snapshot.origin == origin }
+
+    fun clear(origin: TransferOrigin) {
+        packetQueue.removeIf { snapshot -> snapshot.origin == origin }
+    }
+
     fun flush(count: Int) {
         // Take all packets until the counter of move packets reaches count and send them
         var counter = 0

@@ -37,5 +37,11 @@ val canCloseMainInventory
     get() = !isInInventoryScreen && mc.player?.containerMenu?.isPlayerInventory == true
         && InventoryManager.isInventoryOpen
 
+/**
+ * The server-side player inventory was opened silently (e.g. by Refill) without a client GUI.
+ */
+val canCloseSilentPlayerInventory
+    get() = InventoryManager.isInventoryOpenServerSide && !isInInventoryScreen && !isInContainerScreen
+
 val AbstractContainerScreen<*>?.syncId
     get() = this?.menu?.containerId ?: 0

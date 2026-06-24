@@ -16,9 +16,10 @@
  * You should have received a copy of the GNU General Public License
  * along with LiquidBounce. If not, see <https://www.gnu.org/licenses/>.
  */
-package net.ccbluex.liquidbounce.features.module.modules.combat.killaura
+package net.ccbluex.liquidbounce.features.module.modules.combat.aimbot
 
 import net.ccbluex.liquidbounce.config.types.list.Tagged
+import net.ccbluex.liquidbounce.features.module.modules.combat.ModuleAimbot
 import net.ccbluex.liquidbounce.utils.client.isOlderThanOrEqual1_8
 import net.ccbluex.liquidbounce.utils.client.mc
 import net.ccbluex.liquidbounce.utils.client.player
@@ -33,7 +34,7 @@ import net.minecraft.world.item.enchantment.Enchantments
 import java.util.function.BooleanSupplier
 
 @Suppress("unused")
-enum class KillAuraRequirements(
+enum class AimbotRequirements(
     override val tag: String,
 ) : Tagged, BooleanSupplier {
     CLICK("Click"),
@@ -45,15 +46,12 @@ enum class KillAuraRequirements(
     override fun getAsBoolean(): Boolean =
         when (this) {
             CLICK -> mc.options.keyAttack.isPressedOnAny || mc.options.keyAttack.wasPressedRecently(250)
-            WEAPON -> player.mainHandItem.isWeapon() && ModuleKillAura.isAllowedAttackItem(player.mainHandItem)
+            WEAPON -> player.mainHandItem.isWeapon() && ModuleAimbot.isAllowedAttackItem(player.mainHandItem)
             EMPTY_HAND -> player.mainHandItem.isEmpty
             VANILLA_NAME -> player.mainHandItem.customName == null
             NOT_BREAKING -> mc.gameMode?.isDestroying == false
         }
 }
 
-/**
- * Check if the item is a weapon.
- */
 private fun ItemStack.isWeapon() = this.isSword || !isOlderThanOrEqual1_8 && this.isAxe
     || this.item is MaceItem || this.getEnchantment(Enchantments.KNOCKBACK) > 0

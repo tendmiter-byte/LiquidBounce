@@ -9,7 +9,7 @@
 
     export let setting: ModuleSetting;
 
-    const cSetting = setting as IntSetting;
+    $: cSetting = setting as IntSetting;
 
     const dispatch = createEventDispatcher();
 
@@ -38,6 +38,13 @@
             dispatch("change");
         });
     });
+
+    $: if (apiSlider && cSetting) {
+        const currentVal = Math.round(parseFloat(apiSlider.get() as string));
+        if (currentVal !== cSetting.value) {
+            apiSlider.set(cSetting.value);
+        }
+    }
 </script>
 
 <div class="setting" class:has-suffix={cSetting.suffix !== ""}>

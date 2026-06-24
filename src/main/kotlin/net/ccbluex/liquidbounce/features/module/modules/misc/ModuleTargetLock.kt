@@ -19,6 +19,7 @@
 package net.ccbluex.liquidbounce.features.module.modules.misc
 
 import it.unimi.dsi.fastutil.ints.Int2LongLinkedOpenHashMap
+import net.ccbluex.liquidbounce.config.ConfigSystem
 import net.ccbluex.liquidbounce.config.types.group.Mode
 import net.ccbluex.liquidbounce.config.types.group.ModeValueGroup
 import net.ccbluex.liquidbounce.config.types.list.Tagged
@@ -29,6 +30,7 @@ import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.event.tickHandler
 import net.ccbluex.liquidbounce.features.module.ClientModule
 import net.ccbluex.liquidbounce.features.module.ModuleCategories
+import net.ccbluex.liquidbounce.features.module.ModuleManager.modulesConfig
 import net.ccbluex.liquidbounce.utils.client.notification
 import net.ccbluex.liquidbounce.utils.math.sq
 import net.minecraft.client.player.AbstractClientPlayer
@@ -52,6 +54,8 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
      */
     private val combatOnly by boolean("Combat", false)
 
+    private val autoEnable by boolean("AutoEnable", true)
+
     private sealed class LockMode(name: String) : Mode(name) {
         override val parent: ModeValueGroup<*>
             get() = mode
@@ -60,7 +64,8 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
 
     private object Filter : LockMode("Filter") {
 
-        private val usernames by textList("Usernames", mutableListOf("Notch"))
+        private val usernamesValue = textList("Usernames", mutableListOf("Notch"))
+        private val usernames by usernamesValue
         private val filterType by enumChoice("FilterType", FilterType.WHITELIST)
 
         enum class FilterType(override val tag: String) : Tagged {
@@ -72,13 +77,67 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
             val name = playerEntity.gameProfile.name
 
             return when (filterType) {
-                FilterType.WHITELIST -> usernames.any { it.equals(name, true) }
-                FilterType.BLACKLIST -> usernames.none {
-                    it.equals(name, true)
-                }
+                FilterType.WHITELIST -> isListedUsername(name)
+                FilterType.BLACKLIST -> !isListedUsername(name)
             }
 
         }
+
+        fun isListedUsername(name: String): Boolean =
+            usernames.any { it.equals(name, ignoreCase = true) }
+
+        fun addListedUsername(name: String): Boolean {
+            if (isListedUsername(name)) {
+                return false
+            }
+
+            updateUsernames { add(0, name) }
+            return true
+        }
+
+        fun removeListedUsername(name: String): Boolean {
+            val index = usernames.indexOfFirst { it.equals(name, ignoreCase = true) }
+            if (index == -1) {
+                return false
+            }
+
+            updateUsernames { removeAt(index) }
+            return true
+        }
+
+        private fun updateUsernames(mutation: MutableList<String>.() -> Unit) {
+            val updated = ArrayList(usernames)
+            updated.mutation()
+            usernamesValue.set(updated)
+            persistSettings()
+        }
+    }
+
+    @JvmStatic
+    fun isListedUsername(name: String): Boolean = Filter.isListedUsername(name)
+
+    fun addListedUsername(name: String): Boolean {
+        ensureFilterModeActive(enableModule = true)
+        return Filter.addListedUsername(name)
+    }
+
+    fun removeListedUsername(name: String): Boolean {
+        ensureFilterModeActive(enableModule = true)
+        return Filter.removeListedUsername(name)
+    }
+
+    private fun ensureFilterModeActive(enableModule: Boolean) {
+        if (enableModule && autoEnable && !enabled) {
+            enabled = true
+        }
+
+        if (mode.activeMode !== Filter) {
+            mode.setByString(Filter.tag)
+        }
+    }
+
+    private fun persistSettings() {
+        ConfigSystem.store(modulesConfig)
     }
 
     private object Temporary : LockMode("Temporary") {

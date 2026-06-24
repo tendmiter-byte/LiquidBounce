@@ -16,7 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with LiquidBounce. If not, see <https://www.gnu.org/licenses/>.
  */
-package net.ccbluex.liquidbounce.features.module.modules.combat.killaura
+package net.ccbluex.liquidbounce.features.module.modules.combat.backtrack
 
 import net.ccbluex.liquidbounce.config.types.list.Tagged
 import net.ccbluex.liquidbounce.utils.client.isOlderThanOrEqual1_8
@@ -33,7 +33,7 @@ import net.minecraft.world.item.enchantment.Enchantments
 import java.util.function.BooleanSupplier
 
 @Suppress("unused")
-enum class KillAuraRequirements(
+enum class BacktrackRequirements(
     override val tag: String,
 ) : Tagged, BooleanSupplier {
     CLICK("Click"),
@@ -45,15 +45,12 @@ enum class KillAuraRequirements(
     override fun getAsBoolean(): Boolean =
         when (this) {
             CLICK -> mc.options.keyAttack.isPressedOnAny || mc.options.keyAttack.wasPressedRecently(250)
-            WEAPON -> player.mainHandItem.isWeapon() && ModuleKillAura.isAllowedAttackItem(player.mainHandItem)
+            WEAPON -> player.mainHandItem.isWeapon() && ModuleBacktrack.isAllowedAttackItem(player.mainHandItem)
             EMPTY_HAND -> player.mainHandItem.isEmpty
             VANILLA_NAME -> player.mainHandItem.customName == null
             NOT_BREAKING -> mc.gameMode?.isDestroying == false
         }
 }
 
-/**
- * Check if the item is a weapon.
- */
 private fun ItemStack.isWeapon() = this.isSword || !isOlderThanOrEqual1_8 && this.isAxe
     || this.item is MaceItem || this.getEnchantment(Enchantments.KNOCKBACK) > 0

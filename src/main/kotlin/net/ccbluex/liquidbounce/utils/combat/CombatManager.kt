@@ -105,7 +105,7 @@ object CombatManager : EventListener {
     val shouldPauseBlocking: Boolean
         get() = pauseBlocking > 0
     val isInCombat: Boolean
-        get() = this.duringCombat > 0 ||
+        get() = duringCombat > 0 ||
             (ModuleKillAura.running && ModuleKillAura.targetTracker.target != null)
 
     fun pauseCombatForAtLeast(pauseTime: Int) {

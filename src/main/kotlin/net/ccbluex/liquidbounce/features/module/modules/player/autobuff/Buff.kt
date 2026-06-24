@@ -23,7 +23,6 @@ import net.ccbluex.liquidbounce.config.types.group.ToggleableValueGroup
 import net.ccbluex.liquidbounce.event.waitTicks
 import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.ModuleAutoBuff.AutoSwap
 import net.ccbluex.liquidbounce.utils.client.SilentHotbar
-import net.ccbluex.liquidbounce.utils.combat.CombatManager
 import net.ccbluex.liquidbounce.utils.inventory.HotbarItemSlot
 import net.ccbluex.liquidbounce.utils.inventory.InventoryManager
 import net.ccbluex.liquidbounce.utils.inventory.Slots
@@ -48,23 +47,29 @@ abstract class Buff(
         // Check if the item is in the hotbar
         val slot = Slots.OffhandWithHotbar.findClosestSlot { isValidItem(it, true) } ?: return false
 
-        CombatManager.pauseCombatForAtLeast(ModuleAutoBuff.combatPauseTime)
+        ModuleAutoBuff.beginBuffing()
+        try {
+            if (slot.isSelected) {
+                execute(slot)
+                return true
+            }
 
-        if (slot.isSelected) {
-            // Check main hand and offhand
-            execute(slot)
-            return true
-        } else if (AutoSwap.enabled) {
+            if (!AutoSwap.enabled) {
+                return false
+            }
+
             // Check if we should auto swap
             // todo: do not hardcode ticksUntilReset
             SilentHotbar.selectSlotSilently(ModuleAutoBuff, slot, 300)
+            ModuleAutoBuff.refreshCombatPause()
             waitTicks(AutoSwap.delayIn.random())
+            ModuleAutoBuff.refreshCombatPause()
             execute(slot)
             waitTicks(AutoSwap.delayOut.random())
             SilentHotbar.resetSlot(ModuleAutoBuff)
             return true
-        } else {
-            return false
+        } finally {
+            ModuleAutoBuff.endBuffing()
         }
     }
 
@@ -73,4 +78,3 @@ abstract class Buff(
     abstract suspend fun execute(slot: HotbarItemSlot)
 
 }
-

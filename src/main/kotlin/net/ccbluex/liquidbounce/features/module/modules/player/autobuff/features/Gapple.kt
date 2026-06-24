@@ -23,6 +23,7 @@ import net.ccbluex.liquidbounce.event.events.KeybindIsPressedEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.event.tickUntil
 import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.HealthBasedBuff
+import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.ModuleAutoBuff
 import net.ccbluex.liquidbounce.utils.inventory.HotbarItemSlot
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.item.Items
@@ -39,7 +40,10 @@ internal object Gapple : HealthBasedBuff("Gapple") {
 
     override suspend fun execute(slot: HotbarItemSlot) {
         forceUseKey = true
-        tickUntil { !passesRequirements }
+        tickUntil {
+            ModuleAutoBuff.refreshCombatPause()
+            !passesRequirements
+        }
         forceUseKey = false
     }
 

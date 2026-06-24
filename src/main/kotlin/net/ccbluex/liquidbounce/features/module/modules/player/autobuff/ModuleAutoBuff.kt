@@ -35,6 +35,10 @@ import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.features
 import net.ccbluex.liquidbounce.utils.aiming.RotationsValueGroup
 import net.ccbluex.liquidbounce.utils.client.SilentHotbar
 import net.ccbluex.liquidbounce.utils.combat.CombatManager
+import net.ccbluex.liquidbounce.utils.inventory.InventoryManager
+import net.ccbluex.liquidbounce.utils.inventory.Slots
+import net.ccbluex.liquidbounce.utils.inventory.findClosestSlot
+import net.ccbluex.liquidbounce.utils.inventory.isInInventoryScreen
 
 object ModuleAutoBuff : ClientModule(
     name = "AutoBuff",
@@ -105,6 +109,36 @@ object ModuleAutoBuff : ClientModule(
     internal val combatPauseTime by int("CombatPauseTime", 0, 0..40, "ticks")
     private val notDuringCombat by boolean("NotDuringCombat", false)
 
+    internal var isBuffing = false
+        private set
+
+    internal val isBuffingOrRefilling: Boolean
+        get() = isBuffing || (Refill.enabled && Refill.hasPendingRefill())
+
+    internal fun refreshCombatPause() {
+        CombatManager.pauseCombatForAtLeast(combatPauseTime.coerceAtLeast(1))
+    }
+
+    internal fun beginBuffing() {
+        isBuffing = true
+        refreshCombatPause()
+    }
+
+    internal fun endBuffing() {
+        isBuffing = false
+    }
+
+    internal fun hasPendingBuffAction(): Boolean {
+        if (isBuffing) {
+            return true
+        }
+
+        return activeFeatures.any { feature ->
+            feature.enabled && feature.passesRequirements &&
+                Slots.OffhandWithHotbar.findClosestSlot { feature.isValidItem(it, true) } != null
+        }
+    }
+
     internal val activeFeatures
         get() = features.filter { it.enabled }
 
@@ -129,13 +163,21 @@ object ModuleAutoBuff : ClientModule(
 
     @Suppress("unused")
     private val refiller = handler<ScheduleInventoryActionEvent> {
-        // If no feature was run, we should run refill
-        if (Refill.enabled) {
-            Refill.execute(it)
+        if (!Refill.enabled || hasPendingBuffAction()) {
+            return@handler
         }
+
+        // Do not silently open the player inventory while a container screen is visible.
+        // That desyncs containerMenu from the chest screen and breaks ChestStealer auto close.
+        if (InventoryManager.isHandledScreenOpen && !isInInventoryScreen) {
+            return@handler
+        }
+
+        Refill.execute(it)
     }
 
     override fun onDisabled() {
+        endBuffing()
         SilentHotbar.resetSlot(ModuleAutoBuff)
         super.onDisabled()
     }

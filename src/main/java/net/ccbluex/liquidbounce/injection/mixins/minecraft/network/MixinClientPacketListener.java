@@ -267,6 +267,17 @@ public abstract class MixinClientPacketListener extends ClientCommonPacketListen
         player.setXRot(prevRotation.xRot() + 0.000001f);
     }
 
+    @Inject(method = "handleContainerSetSlot", at = @At("HEAD"), cancellable = true)
+    private void hookContainerSetSlot(ClientboundContainerSetSlotPacket packet, CallbackInfo ci) {
+        if (net.ccbluex.liquidbounce.utils.inventory.GhostItemFix.shouldIgnoreSetSlot(
+                packet.getContainerId(),
+                packet.getSlot(),
+                packet.getItem()
+        )) {
+            ci.cancel();
+        }
+    }
+
     @ModifyVariable(method = "sendChat", at = @At("HEAD"), argsOnly = true, name = "content")
     private String handleSendMessage(String content) {
         var result = ModuleBetterChat.INSTANCE.modifyMessage(content);

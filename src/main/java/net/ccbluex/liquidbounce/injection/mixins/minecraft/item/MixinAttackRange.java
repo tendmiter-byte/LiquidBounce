@@ -39,7 +39,9 @@ public abstract class MixinAttackRange {
         at = @At(value = "FIELD", target = "Lnet/minecraft/world/item/component/AttackRange;hitboxMargin:F", opcode = Opcodes.GETFIELD)
     )
     private static float applyHitboxMargin(float original, @Local(argsOnly = true, name = "attacker") LivingEntity entity) {
-        if (entity == Minecraft.getInstance().player && ModuleHitbox.INSTANCE.getRunning() && ModuleHitbox.INSTANCE.getApplyToComponent()) {
+        if (entity == Minecraft.getInstance().player
+            && ModuleHitbox.INSTANCE.shouldApply()
+            && ModuleHitbox.INSTANCE.getApplyToComponent()) {
             return ModuleHitbox.INSTANCE.getSize() + original;
         }
         return original;

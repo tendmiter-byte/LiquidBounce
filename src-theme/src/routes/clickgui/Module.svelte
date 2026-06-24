@@ -13,6 +13,7 @@
     import {setItem} from "../../integration/persistent_storage";
     import {convertToSpacedString, spaceSeperatedNames} from "../../theme/theme_config";
     import {scaleFactor} from "./clickgui_store";
+    import {listen} from "../../integration/ws";
 
     export let name: string;
     export let enabled: boolean;
@@ -53,6 +54,12 @@
         configurable = await getModuleSettings(name);
         hasSettings = configurable.value.filter(v => v.name !== "Bind" && v.name !== "Hidden").length > 0;
     }
+
+    listen("valueChanged", async () => {
+        if (expanded) {
+            await fetchModuleSettings();
+        }
+    });
 
     async function updateModuleSettings() {
         await setModuleSettings(name, configurable);
@@ -97,6 +104,9 @@
 
     async function toggleExpanded() {
         expanded = !expanded;
+        if (expanded) {
+            await fetchModuleSettings();
+        }
         await setItem(path, expanded.toString());
     }
 </script>

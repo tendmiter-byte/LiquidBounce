@@ -95,7 +95,7 @@ object AutoArmorSaveArmor : ToggleableValueGroup(ModuleAutoArmor, "SaveArmor", t
 
         // closes the current screen so that the armor slots are synced again
         if (hasLostArmorPiece) {
-            player.closeContainer()
+            player.clientSideCloseContainer()
             return@tickHandler
         }
 
@@ -146,7 +146,7 @@ object AutoArmorSaveArmor : ToggleableValueGroup(ModuleAutoArmor, "SaveArmor", t
 
         // the current screen might change while the module is waiting
         if (mc.gui.screen() is InventoryScreen) {
-            player.closeContainer()
+            player.clientSideCloseContainer()
         }
     }
 
@@ -158,7 +158,7 @@ object AutoArmorSaveArmor : ToggleableValueGroup(ModuleAutoArmor, "SaveArmor", t
 
             if (mc.gui.screen() is AbstractContainerScreen<*>) {
                 // closes chests/crating tables/etc. (it never happens)
-                player.closeContainer()
+                player.clientSideCloseContainer()
             } else if (mc.gui.screen() != null) {
                 // closes ClickGUI, game chat, etc. to save some armor :)
                 mc.gui.screen()!!.onClose()

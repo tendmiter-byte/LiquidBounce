@@ -492,7 +492,7 @@ public abstract class MixinLocalPlayer extends MixinPlayer implements LocalPlaye
     @WrapWithCondition(method = "clientSideCloseContainer", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/Gui;setScreen(Lnet/minecraft/client/gui/screens/Screen;)V"))
     private boolean preventCloseScreen(Gui instance, Screen screen) {
         // Prevent closing screen if the current screen is a client screen
-        return !ScreenManager.isClientScreen(screen);
+        return !ScreenManager.isClientScreen(instance.screen());
     }
 
 }

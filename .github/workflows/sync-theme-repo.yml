@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - nextgen
+      - improvised
     paths:
       - 'src-theme/**'
   workflow_dispatch:
@@ -11,13 +12,15 @@ on:
 jobs:
   sync-theme:
     runs-on: ubuntu-latest
+    env:
+      THEME_REPO_TOKEN: ${{ secrets.LIQUIDBOUNCE_PAT }}
     
     steps:
     - name: Checkout main repository
       uses: actions/checkout@v6
       with:
         fetch-depth: 0
-        token: ${{ secrets.LIQUIDBOUNCE_PAT }}
+        token: ${{ github.token }}
 
     - name: Check if src-theme directory exists
       run: |
@@ -26,32 +29,30 @@ jobs:
           exit 1
         fi
 
+    - name: Check theme repository token
+      run: |
+        if [ -z "$THEME_REPO_TOKEN" ]; then
+          echo "Error: LIQUIDBOUNCE_PAT is not configured."
+          echo "Create a repository secret named LIQUIDBOUNCE_PAT with write access to ${{ github.repository_owner }}/liquidbounce-theme."
+          exit 1
+        fi
+
     - name: Setup theme repository
       run: |
-        # Try to clone the existing repository, or create a new one
-        if git clone https://x-access-token:${{ secrets.LIQUIDBOUNCE_PAT }}@github.com/${{ github.repository_owner }}/liquidbounce-theme.git theme-repo 2>/dev/null; then
-          echo "Existing repository cloned successfully"
-          cd theme-repo
-          
-          # Ensure we're on main branch (handle master -> main migration)
-          if git branch -r | grep -q "origin/main"; then
-            git checkout main 2>/dev/null || git checkout -b main
-          elif git branch -r | grep -q "origin/master"; then
-            git checkout master
-            git checkout -b main
-            git push -u origin main
-          else
-            git checkout -b main
-          fi
-        else
-          echo "Repository doesn't exist or is empty, creating new structure"
-          mkdir theme-repo
-          cd theme-repo
-          git init
+        git clone https://x-access-token:${THEME_REPO_TOKEN}@github.com/${{ github.repository_owner }}/liquidbounce-theme.git theme-repo
+        echo "Theme repository cloned successfully"
+
+        cd theme-repo
+
+        # Ensure we're on main branch (handle master -> main migration)
+        if git branch -r | grep -q "origin/main"; then
+          git checkout main 2>/dev/null || git checkout -b main
+        elif git branch -r | grep -q "origin/master"; then
+          git checkout master
           git checkout -b main
-          
-          # Set up remote
-          git remote add origin https://x-access-token:${{ secrets.LIQUIDBOUNCE_PAT }}@github.com/${{ github.repository_owner }}/liquidbounce-theme.git
+          git push -u origin main
+        else
+          git checkout -b main
         fi
 
     - name: Copy theme files

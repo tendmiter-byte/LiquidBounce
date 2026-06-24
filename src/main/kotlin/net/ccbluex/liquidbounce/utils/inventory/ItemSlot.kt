@@ -226,7 +226,7 @@ enum class HotbarItemSlot(
     override fun getIdForServer(screen: AbstractContainerScreen<*>?): Int? {
         return when {
             isOffHand && isOlderThanOrEqual1_8 -> null
-            screen == null -> playerInventoryMenuSlot
+            screen == null || screen.menu.isPlayerInventory -> playerInventoryMenuSlot
             hotbarIndex != null -> screen.itemCount() - Inventory.SELECTION_SIZE + hotbarIndex
             else -> null
         }
@@ -274,7 +274,7 @@ class InventoryItemSlot private constructor(private val inventorySlot: Int) : It
         get() = ItemSlot.Type.INVENTORY
 
     override fun getIdForServer(screen: AbstractContainerScreen<*>?): Int {
-        return if (screen == null) {
+        return if (screen == null || screen.menu.isPlayerInventory) {
             Inventory.SELECTION_SIZE + inventorySlot
         } else {
             screen.itemCount() - Inventory.INVENTORY_SIZE + this.inventorySlot

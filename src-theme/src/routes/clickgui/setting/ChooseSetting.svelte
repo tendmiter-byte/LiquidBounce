@@ -6,7 +6,7 @@
 
     export let setting: ModuleSetting;
 
-    const cSetting = setting as ChooseSetting;
+    $: cSetting = setting as ChooseSetting;
 
     const dispatch = createEventDispatcher();
 

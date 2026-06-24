@@ -48,11 +48,15 @@ import java.util.function.Predicate
  */
 open class TargetTracker(
     defaultPriority: TargetPriority = TargetPriority.HEALTH,
-    rangeValue: RangedValueProvider = NoneRangedValueProvider
-) : TargetSelector(defaultPriority, rangeValue) {
+    rangeValue: RangedValueProvider = NoneRangedValueProvider,
+    defaultFov: Float = 180f,
+) : TargetSelector(defaultPriority, rangeValue, defaultFov) {
 
-    constructor(defaultPriority: TargetPriority = TargetPriority.HEALTH, range: RangedValue<*>) :
-        this(defaultPriority, DummyRangedValueProvider(range))
+    constructor(
+        defaultPriority: TargetPriority = TargetPriority.HEALTH,
+        range: RangedValue<*>,
+        defaultFov: Float = 180f,
+    ) : this(defaultPriority, DummyRangedValueProvider(range), defaultFov)
 
     var target: LivingEntity? = null
 
@@ -90,17 +94,23 @@ open class TargetTracker(
 
 open class TargetSelector(
     defaultPriority: TargetPriority = TargetPriority.HEALTH,
-    rangeValue: RangedValueProvider = NoneRangedValueProvider
+    rangeValue: RangedValueProvider = NoneRangedValueProvider,
+    defaultFov: Float = 180f,
 ) : ValueGroup("Target") {
 
-    constructor(defaultPriority: TargetPriority = TargetPriority.HEALTH, range: RangedValue<*>) :
-        this(defaultPriority, DummyRangedValueProvider(range))
+    constructor(
+        defaultPriority: TargetPriority = TargetPriority.HEALTH,
+        range: RangedValue<*>,
+        defaultFov: Float = 180f,
+    ) : this(defaultPriority, DummyRangedValueProvider(range), defaultFov)
 
     var closestSquaredEnemyDistance: Double = 0.0
         private set
 
     private val range = rangeValue.register(this)
-    private val fov by float("FOV", 180f, 0f..180f)
+    private val fov by float("FOV", defaultFov, 0f..180f)
+
+    internal fun isAngleWithinFov(angle: Float) = fov >= angle
     private val hurtTime by int("HurtTime", 10, 0..10)
 
     @Suppress("unused", "UnusedPrivateProperty")

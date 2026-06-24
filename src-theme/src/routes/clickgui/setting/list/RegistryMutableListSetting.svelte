@@ -16,12 +16,16 @@
     export let setting: ModuleSetting;
     export let path: string;
 
-    const cSetting = setting as RegistryMutableListSetting;
+    $: cSetting = setting as RegistryMutableListSetting;
 
-    const thisPath = `${path}.${cSetting.name}`;
+    $: thisPath = `${path}.${cSetting.name}`;
     let expanded = localStorage.getItem(thisPath) === "true";
 
     $: setItem(thisPath, expanded.toString());
+
+    $: if (cSetting && allItems) {
+        updateItems();
+    }
 
     let allItems: NamedItem[] = [];
     let selectedItems: NamedItem[] = [];

@@ -20,11 +20,11 @@
     export let setting: ModuleSetting;
     export let path: string;
 
-    const cSetting = setting as CurveSetting;
+    $: cSetting = setting as CurveSetting;
 
     const dispatch = createEventDispatcher();
 
-    const thisPath = `${path}.${cSetting.name}`;
+    $: thisPath = `${path}.${cSetting.name}`;
     let expanded = localStorage.getItem(thisPath) === "true";
 
     $: setItem(thisPath, expanded.toString());
@@ -37,6 +37,10 @@
     Chart.register(LinearScale, PointElement, LineElement, LineController, ScatterController, dragDataPlugin);
 
     let isDragging = false;
+    $: if (chart && cSetting && !isDragging) {
+        chart.data.datasets[0].data = sortPoints(cSetting.value.map(point => ({x: point.x, y: point.y})));
+        chart.update();
+    }
     const EPS = 1e-9;
     // Points at the exact edges of the x-axis are locked. This margin prevents additional points from being locked.
     const EDGE_MARGIN = 1e-6;
