@@ -61,6 +61,8 @@ import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.component.AttackRange;
+import net.minecraft.client.DeltaTracker;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -69,11 +71,13 @@ import org.objectweb.asm.Opcodes;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
+import net.ccbluex.liquidbounce.features.module.modules.player.ModuleMultiRaycast;
 
 import static net.ccbluex.liquidbounce.utils.client.ProtocolUtilKt.getUsesViaFabricPlus;
 
@@ -86,6 +90,13 @@ public abstract class MixinMinecraft {
     @Shadow
     @Nullable
     public HitResult hitResult;
+    @Shadow
+    @Nullable
+    public abstract Entity getCameraEntity();
+    @Shadow
+    public abstract DeltaTracker getDeltaTracker();
+    @Unique
+    private HitResult liquidbounce$originalHitResult;
     @Shadow
     @Final
     public Options options;
@@ -274,6 +285,26 @@ public abstract class MixinMinecraft {
     @Inject(method = "handleKeybinds", at = @At("RETURN"))
     private void hookHandleInputEvent(CallbackInfo callbackInfo) {
         EventManager.INSTANCE.callEvent(InputHandleEvent.INSTANCE);
+    }
+
+    @Inject(method = "startUseItem", at = @At("HEAD"))
+    private void beforeStartUseItem(CallbackInfo ci) {
+        if (ModuleMultiRaycast.INSTANCE.getRunning() && this.player != null) {
+            this.liquidbounce$originalHitResult = this.hitResult;
+            Entity camera = this.getCameraEntity() != null ? this.getCameraEntity() : this.player;
+            double blockInteractionRange = this.player.blockInteractionRange();
+            double entityInteractionRange = this.player.entityInteractionRange();
+            float tickDelta = this.getDeltaTracker().getGameTimeDeltaPartialTick(true);
+            this.hitResult = ModuleMultiRaycast.INSTANCE.runRaycast(camera, blockInteractionRange, entityInteractionRange, tickDelta);
+        }
+    }
+
+    @Inject(method = "startUseItem", at = @At("RETURN"))
+    private void afterStartUseItem(CallbackInfo ci) {
+        if (this.liquidbounce$originalHitResult != null) {
+            this.hitResult = this.liquidbounce$originalHitResult;
+            this.liquidbounce$originalHitResult = null;
+        }
     }
 
     /**

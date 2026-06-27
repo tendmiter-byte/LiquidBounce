@@ -23,6 +23,7 @@ import net.ccbluex.liquidbounce.config.types.list.Tagged
 import net.ccbluex.liquidbounce.features.module.ClientModule
 import net.ccbluex.liquidbounce.features.module.ModuleCategories
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleTeams
+import net.ccbluex.liquidbounce.features.module.modules.misc.antibot.ModuleAntiBot
 import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.client.player
@@ -45,6 +46,7 @@ object ModuleMultiRaycast : ClientModule("MultiRaycast", ModuleCategories.PLAYER
 
     private val throughEntities by boolean("ThroughEntities", true)
     private val ignoreTeammates by boolean("IgnoreTeammates", true)
+    private val ignorePlayers by boolean("IgnorePlayers", true)
     private val ignoreArmorStands by boolean("IgnoreArmorStands", true)
     private val ignorePets by boolean("IgnorePets", true)
 
@@ -99,6 +101,11 @@ object ModuleMultiRaycast : ClientModule("MultiRaycast", ModuleCategories.PLAYER
                         return@filter false
                     }
                     if (ModuleTeams.running && ModuleTeams.isInClientPlayersTeam(entity)) {
+                        return@filter false
+                    }
+                }
+                if (ignorePlayers && entity is Player) {
+                    if (!ModuleAntiBot.isBot(entity)) {
                         return@filter false
                     }
                 }
