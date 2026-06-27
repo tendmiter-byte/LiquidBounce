@@ -105,7 +105,7 @@ object ModuleMultiRaycast : ClientModule("MultiRaycast", ModuleCategories.PLAYER
                 if (ignoreArmorStands && entity is ArmorStand) {
                     return@filter false
                 }
-                if (ignorePets && entity is OwnableEntity && entity.ownerUUID != null) {
+                if (ignorePets && entity is OwnableEntity && entity.ownerReference?.uuid != null) {
                     return@filter false
                 }
             }
