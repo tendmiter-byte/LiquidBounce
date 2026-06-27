@@ -29,6 +29,7 @@ import net.ccbluex.liquidbounce.utils.aiming.point.exempts.ExemptContext
 import net.ccbluex.liquidbounce.utils.aiming.point.features.PointProcessorDelay
 import net.ccbluex.liquidbounce.utils.aiming.point.features.PointProcessorGaussian
 import net.ccbluex.liquidbounce.utils.aiming.point.features.PointProcessorLazy
+import net.ccbluex.liquidbounce.utils.aiming.point.features.PointProcessorPerlin
 import net.ccbluex.liquidbounce.utils.aiming.utils.projectPointsOnBox
 import net.ccbluex.liquidbounce.utils.entity.PositionExtrapolation
 import net.ccbluex.liquidbounce.utils.entity.getBoundingBoxAt
@@ -52,6 +53,12 @@ class PointTracker(val parent: EventListener) : ValueGroup("AimPoint"), EventLis
     private val gaussian = tree(PointProcessorGaussian(this))
 
     /**
+     * This introduces a layer of randomness to the point tracker. A Perlin noise distribution is being used to
+     * calculate the offset.
+     */
+    private val perlin = tree(PointProcessorPerlin(this))
+
+    /**
      * This will allow the point to stay at a certain position when the minimum threshold is not reached.
      */
     private val lazy = tree(PointProcessorLazy(this))
@@ -61,7 +68,7 @@ class PointTracker(val parent: EventListener) : ValueGroup("AimPoint"), EventLis
      */
     private val delay = tree(PointProcessorDelay(this))
 
-    private val processors = arrayOf(delay, lazy, gaussian)
+    private val processors = arrayOf(delay, lazy, gaussian, perlin)
 
     /**
      * The point tracker is being used to track a certain point of an entity.

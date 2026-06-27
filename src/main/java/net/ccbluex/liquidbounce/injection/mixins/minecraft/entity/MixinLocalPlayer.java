@@ -32,6 +32,7 @@ import net.ccbluex.liquidbounce.features.module.modules.movement.ModuleNoPush;
 import net.ccbluex.liquidbounce.features.module.modules.movement.ModuleSprint;
 import net.ccbluex.liquidbounce.features.module.modules.movement.NoPushBy;
 import net.ccbluex.liquidbounce.features.module.modules.movement.noslow.ModuleNoSlow;
+import net.ccbluex.liquidbounce.features.module.modules.player.ModuleMultiRaycast;
 import net.ccbluex.liquidbounce.features.module.modules.player.ModuleNoEntityInteract;
 import net.ccbluex.liquidbounce.features.module.modules.player.ModuleReach;
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleFreeCam;
@@ -71,6 +72,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(LocalPlayer.class)
 public abstract class MixinLocalPlayer extends MixinPlayer implements LocalPlayerAddition {
@@ -248,6 +250,13 @@ public abstract class MixinLocalPlayer extends MixinPlayer implements LocalPlaye
         }
 
         return original;
+    }
+
+    @Inject(method = "pick(Lnet/minecraft/world/entity/Entity;DDF)Lnet/minecraft/world/phys/HitResult;", at = @At("HEAD"), cancellable = true)
+    private static void hookPick(Entity camera, double blockInteractionRange, double entityInteractionRange, float tickDelta, CallbackInfoReturnable<HitResult> cir) {
+        if (ModuleMultiRaycast.INSTANCE.getRunning()) {
+            cir.setReturnValue(ModuleMultiRaycast.INSTANCE.runRaycast(camera, blockInteractionRange, entityInteractionRange, tickDelta));
+        }
     }
 
     /**
