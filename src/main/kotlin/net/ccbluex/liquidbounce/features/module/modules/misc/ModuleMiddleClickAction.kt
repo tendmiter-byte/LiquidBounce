@@ -121,7 +121,7 @@ object ModuleMiddleClickAction : ClientModule(
             val rotation = player.rotation
 
             val entity = (findEntityInCrosshair(pickUpRange.toDouble(), rotation) { it is Player }
-                ?: return@handler).entity as Player
+                ?: return@handler).entity as? Player ?: return@handler
 
             val entityHitResult = isLookingAtEntity(
                 toEntity = entity, rotation = rotation, range = pickUpRange.toDouble(),

@@ -55,7 +55,7 @@ internal fun findCrosshairPlayer(
     rotation: Rotation = player.rotation,
 ): Player? {
     val entity = (findEntityInCrosshair(pickUpRange, rotation) { it is Player }
-        ?: return null).entity as Player
+        ?: return null).entity as? Player ?: return null
 
     if (isLookingAtEntity(
             toEntity = entity,
