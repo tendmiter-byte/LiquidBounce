@@ -32,12 +32,12 @@ jobs:
     - name: Check theme repository token
       run: |
         if [ -z "$THEME_REPO_TOKEN" ]; then
-          echo "Error: LIQUIDBOUNCE_PAT is not configured."
+          echo "::warning::LIQUIDBOUNCE_PAT is not configured. Skipping theme sync."
           echo "Create a repository secret named LIQUIDBOUNCE_PAT with write access to ${{ github.repository_owner }}/liquidbounce-theme."
-          exit 1
         fi
 
     - name: Setup theme repository
+      if: ${{ env.THEME_REPO_TOKEN != '' }}
       run: |
         git clone https://x-access-token:${THEME_REPO_TOKEN}@github.com/${{ github.repository_owner }}/liquidbounce-theme.git theme-repo
         echo "Theme repository cloned successfully"
@@ -56,6 +56,7 @@ jobs:
         fi
 
     - name: Copy theme files
+      if: ${{ env.THEME_REPO_TOKEN != '' }}
       run: |
         cd theme-repo
         
@@ -71,12 +72,14 @@ jobs:
         fi
 
     - name: Configure Git
+      if: ${{ env.THEME_REPO_TOKEN != '' }}
       run: |
         cd theme-repo
         git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
 
     - name: Commit and push changes
+      if: ${{ env.THEME_REPO_TOKEN != '' }}
       run: |
         cd theme-repo
         
@@ -108,6 +111,7 @@ jobs:
         fi
 
     - name: Create summary
+      if: ${{ env.THEME_REPO_TOKEN != '' }}
       run: |
         echo "Theme repository sync completed!" >> $GITHUB_STEP_SUMMARY
         echo "- Source commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

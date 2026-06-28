@@ -10,8 +10,8 @@
     export let setting: ModuleSetting;
     export let path: string;
 
-    const cSetting = setting as ChoiceSetting;
-    const thisPath = `${path}.${cSetting.name}`;
+    $: cSetting = setting as ChoiceSetting;
+    $: thisPath = `${path}.${cSetting.name}`;
 
     const dispatch = createEventDispatcher();
     const options = Object.keys(cSetting.choices);

@@ -16,9 +16,9 @@
     export let setting: ModuleSetting;
     export let path: string;
 
-    const cSetting = setting as RegistryMutableListSetting;
+    $: cSetting = setting as RegistryMutableListSetting;
 
-    const thisPath = `${path}.${cSetting.name}`;
+    $: thisPath = `${path}.${cSetting.name}`;
     let expanded = localStorage.getItem(thisPath) === "true";
 
     $: setItem(thisPath, expanded.toString());
@@ -52,6 +52,10 @@
         selectedItems = cSetting.value.map(id => allItems.find(item => item.value === id))
             .filter(Boolean) as NamedItem[];
         selectableItems = allItems.filter(item => !cSetting.value.includes(item.value));
+    }
+
+    $: if (cSetting && allItems.length > 0) {
+        updateItems();
     }
 
     const dispatch = createEventDispatcher();

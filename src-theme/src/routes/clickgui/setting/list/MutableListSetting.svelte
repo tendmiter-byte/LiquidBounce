@@ -7,7 +7,7 @@
 
     export let setting: ModuleSetting;
 
-    const cSetting = setting as ListSetting;
+    $: cSetting = setting as ListSetting;
 
     const dispatch = createEventDispatcher();
 
