@@ -9,7 +9,7 @@
 
     export let setting: ModuleSetting;
 
-    $: cSetting = setting as KeySetting;
+    const cSetting = setting as KeySetting;
 
     const dispatch = createEventDispatcher();
 

@@ -9,7 +9,7 @@
 
     export let setting: ModuleSetting;
 
-    $: cSetting = setting as BooleanSetting;
+    const cSetting = setting as BooleanSetting;
 
     const dispatch = createEventDispatcher();
 

@@ -30,7 +30,7 @@
 
     export let setting: ModuleSetting;
 
-    $: cSetting = setting as BindSetting;
+    const cSetting = setting as BindSetting;
 
     const dispatch = createEventDispatcher();
 

@@ -5,7 +5,7 @@
         setModuleSettings,
         setModuleEnabled,
     } from "../../integration/rest";
-    import type {ConfigurableSetting} from "../../integration/types";
+    import type {ConfigurableSetting, ModuleSetting} from "../../integration/types";
     import GenericSetting from "./setting/common/GenericSetting.svelte";
     import {slide} from "svelte/transition";
     import {quintOut} from "svelte/easing";
@@ -55,12 +55,6 @@
         hasSettings = configurable.value.filter(v => v.name !== "Bind" && v.name !== "Hidden").length > 0;
     }
 
-    listen("valueChanged", async () => {
-        if (expanded) {
-            await fetchModuleSettings();
-        }
-    });
-
     async function updateModuleSettings() {
         await setModuleSettings(name, configurable);
         await fetchModuleSettings();
@@ -104,11 +98,29 @@
 
     async function toggleExpanded() {
         expanded = !expanded;
-        if (expanded) {
-            await fetchModuleSettings();
-        }
         await setItem(path, expanded.toString());
     }
+
+    listen("valueChanged", (e) => {
+        if (configurable) {
+            const hasSetting = (settings: ModuleSetting[]): boolean => {
+                for (const s of settings) {
+                    if (s.name === e.value.name) {
+                        return true;
+                    }
+                    if ((s.valueType === "CHOICE" || s.valueType === "TOGGLEABLE" || s.valueType === "CONFIGURABLE") && Array.isArray(s.value)) {
+                        if (hasSetting(s.value as ModuleSetting[])) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+            if (hasSetting(configurable.value)) {
+                fetchModuleSettings();
+            }
+        }
+    });
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->

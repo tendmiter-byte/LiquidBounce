@@ -10,8 +10,8 @@
     export let path: string;
     export let hideExpandControl: boolean = false;
 
-    $: cSetting = setting as ConfigurableSetting;
-    $: thisPath = `${path}.${cSetting.name}`;
+    const cSetting = setting as ConfigurableSetting;
+    const thisPath = `${path}.${cSetting.name}`;
 
     const dispatch = createEventDispatcher();
 

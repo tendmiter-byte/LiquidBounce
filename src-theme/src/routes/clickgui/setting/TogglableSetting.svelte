@@ -10,14 +10,14 @@
     export let setting: ModuleSetting;
     export let path: string;
 
-    $: cSetting = setting as TogglableSetting;
-    $: thisPath = `${path}.${cSetting.name}`;
+    const cSetting = setting as TogglableSetting;
+    const thisPath = `${path}.${cSetting.name}`;
 
     const dispatch = createEventDispatcher();
 
-    $: enabledSetting = cSetting.value[0] as TBooleanSetting;
+    const enabledSetting = cSetting.value[0] as TBooleanSetting;
 
-    $: nestedSettings = cSetting.value.slice(1);
+    let nestedSettings = cSetting.value.slice(1);
 
     let expanded = localStorage.getItem(thisPath) === "true";
 

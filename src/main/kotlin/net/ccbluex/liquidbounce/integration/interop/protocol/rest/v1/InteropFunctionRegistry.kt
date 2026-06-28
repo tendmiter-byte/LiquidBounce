@@ -41,6 +41,7 @@ import net.ccbluex.liquidbounce.integration.interop.protocol.rest.v1.game.regist
 import net.ccbluex.liquidbounce.integration.interop.protocol.rest.v1.game.serverListRoutes
 import net.ccbluex.liquidbounce.integration.interop.protocol.rest.v1.game.textureRoutes
 import net.ccbluex.liquidbounce.integration.interop.protocol.rest.v1.game.worldListRoutes
+import net.ccbluex.liquidbounce.integration.interop.protocol.rest.v1.client.targetLockRoutes
 import net.ccbluex.netty.http.routing.Routing
 
 internal fun Routing.registerInteropFunctions() = route("/api/v1/client") {
@@ -50,6 +51,7 @@ internal fun Routing.registerInteropFunctions() = route("/api/v1/client") {
     themeRoutes()
     screenRoutes()
     moduleRoutes()
+    targetLockRoutes()
     componentRoutes()
     sessionRoutes()
     accountRoutes()

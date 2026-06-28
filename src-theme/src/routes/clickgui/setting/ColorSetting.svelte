@@ -9,7 +9,7 @@
 
     export let setting: ModuleSetting;
 
-    $: cSetting = setting as ColorSetting;
+    const cSetting = setting as ColorSetting;
 
     const dispatch = createEventDispatcher();
 
@@ -17,10 +17,7 @@
     let pickr: Pickr;
     let hidden = true;
 
-    $: hex = rgbaToHex(intToRgba(cSetting.value));
-    $: if (pickr) {
-        pickr.setColor(hex, true);
-    }
+    let hex = rgbaToHex(intToRgba(cSetting.value));
 
     onMount(() => {
         pickr = Pickr.create({

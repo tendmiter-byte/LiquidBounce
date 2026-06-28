@@ -9,7 +9,7 @@
 
     export let setting: ModuleSetting;
 
-    $: cSetting = setting as FloatSetting;
+    const cSetting = setting as FloatSetting;
 
     const dispatch = createEventDispatcher();
 
@@ -52,13 +52,6 @@
             dispatch("change");
         });
     });
-
-    $: if (apiSlider && cSetting) {
-        const currentVal = parseFloat(apiSlider.get() as string);
-        if (Math.abs(currentVal - cSetting.value) > 1e-4) {
-            apiSlider.set(cSetting.value);
-        }
-    }
 </script>
 
 <div class="setting" class:has-suffix={cSetting.suffix !== ""}>

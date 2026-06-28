@@ -7,7 +7,7 @@
     export let setting: ModuleSetting;
     export let path: string;
 
-    $: cSetting = setting as RegistryListSetting;
+    const cSetting = setting as RegistryListSetting;
     let items: NamedItem[] = [];
 
     onMount(async () => {

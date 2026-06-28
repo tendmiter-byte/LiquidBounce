@@ -79,7 +79,7 @@ import kotlin.random.Random
 /**
  * A target tracker to choose the best enemy to attack
  */
-open class TargetRenderer(
+class TargetRenderer(
     owner: ToggleableValueGroup,
     val target: () -> Entity?,
 ) : ToggleableValueGroup(owner, "TargetRendering", true) {

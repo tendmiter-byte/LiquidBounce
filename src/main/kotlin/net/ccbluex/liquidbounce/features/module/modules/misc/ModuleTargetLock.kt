@@ -64,7 +64,7 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
 
     private object Filter : LockMode("Filter") {
 
-        private val usernamesValue = textList("Usernames", mutableListOf("Notch"))
+        val usernamesValue = textList("Usernames", mutableListOf("Notch"))
         private val usernames by usernamesValue
         private val filterType by enumChoice("FilterType", FilterType.WHITELIST)
 
@@ -112,6 +112,9 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
             persistSettings()
         }
     }
+
+    val listedUsernames: List<String>
+        get() = Filter.usernamesValue.get().toList()
 
     @JvmStatic
     fun isListedUsername(name: String): Boolean = Filter.isListedUsername(name)

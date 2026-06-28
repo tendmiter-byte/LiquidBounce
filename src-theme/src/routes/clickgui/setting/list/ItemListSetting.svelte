@@ -5,8 +5,8 @@
     export let setting: ModuleSetting;
     export let path: string;
 
-    $: cSetting = setting as ItemListSetting;
-    $: items = cSetting.items;
+    const cSetting = setting as ItemListSetting;
+    let items: NamedItem[] = cSetting.items;
 </script>
 
 <GenericListSetting {path} bind:setting={setting} {items} on:change />
