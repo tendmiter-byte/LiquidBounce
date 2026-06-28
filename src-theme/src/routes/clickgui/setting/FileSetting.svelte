@@ -6,7 +6,7 @@
 
     export let setting: ModuleSetting;
 
-    const cSetting = setting as FileSetting;
+    $: cSetting = setting as FileSetting;
 
     let selecting = false;
 

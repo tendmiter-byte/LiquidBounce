@@ -7,6 +7,8 @@
     import {convertToSpacedString, spaceSeperatedNames} from "../../../theme/theme_config";
     import Dropdown from "./common/Dropdown.svelte";
 
+    import {onMount} from "svelte";
+
     export let setting: ModuleSetting;
     export let path: string;
 
@@ -14,15 +16,20 @@
     $: thisPath = `${path}.${cSetting.name}`;
 
     const dispatch = createEventDispatcher();
-    const options = Object.keys(cSetting.choices);
-    let expanded = localStorage.getItem(thisPath) === "true";
+    $: options = cSetting.choices ? Object.keys(cSetting.choices) : [];
+    let expanded = false;
+    let mounted = false;
 
-    let nestedSettings = cSetting.choices[cSetting.active]
-        .value as ModuleSetting[];
-    $: nestedSettings = cSetting.choices[cSetting.active]
-        .value as ModuleSetting[];
+    $: nestedSettings = (cSetting.choices && cSetting.choices[cSetting.active] && cSetting.choices[cSetting.active].value) as ModuleSetting[] || [];
 
-    $: setItem(thisPath, expanded.toString());
+    onMount(() => {
+        expanded = localStorage.getItem(thisPath) === "true";
+        mounted = true;
+    });
+
+    $: if (mounted) {
+        setItem(thisPath, expanded.toString());
+    }
 
     function handleChange() {
         setting = { ...cSetting };

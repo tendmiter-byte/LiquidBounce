@@ -98,6 +98,9 @@
 
     async function toggleExpanded() {
         expanded = !expanded;
+        if (expanded) {
+            await fetchModuleSettings();
+        }
         await setItem(path, expanded.toString());
     }
 

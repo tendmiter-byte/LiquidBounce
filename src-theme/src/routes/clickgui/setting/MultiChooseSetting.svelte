@@ -1,5 +1,5 @@
 <script lang="ts">
-    import {createEventDispatcher} from "svelte";
+    import {createEventDispatcher, onMount} from "svelte";
     import type {ModuleSetting, MultiChooseSetting,} from "../../../integration/types";
     import {slide} from "svelte/transition";
     import {convertToSpacedString, spaceSeperatedNames} from "../../../theme/theme_config";
@@ -9,8 +9,8 @@
     export let setting: ModuleSetting;
     export let path: string;
 
-    const cSetting = setting as MultiChooseSetting;
-    const thisPath = `${path}.${cSetting.name}`;
+    $: cSetting = setting as MultiChooseSetting;
+    $: thisPath = `${path}.${cSetting.name}`;
 
     let errorValue: string | null = null;
     let timeoutId: ReturnType<typeof setTimeout>;
@@ -18,8 +18,9 @@
     const dispatch = createEventDispatcher();
 
     function handleChange(v: string) {
-        if (cSetting.value.includes(v)) {
-            const filtered = cSetting.value.filter(item => item !== v);
+        const values = cSetting.value || [];
+        if (values.includes(v)) {
+            const filtered = values.filter(item => item !== v);
 
             if (filtered.length === 0 && !cSetting.canBeNone) {
                 // Doesn't remove the element because in this case the value will be empty
@@ -33,16 +34,24 @@
 
             cSetting.value = filtered;
         } else {
-            cSetting.value = [...cSetting.value, v]
+            cSetting.value = [...values, v]
         }
 
         setting = {...cSetting};
         dispatch("change");
     }
 
-    let expanded = localStorage.getItem(thisPath) === "true";
+    let expanded = false;
+    let mounted = false;
 
-    $: setItem(thisPath, expanded.toString());
+    onMount(() => {
+        expanded = localStorage.getItem(thisPath) === "true";
+        mounted = true;
+    });
+
+    $: if (mounted) {
+        setItem(thisPath, expanded.toString());
+    }
 
     function toggleExpanded() {
         expanded = !expanded;
@@ -54,16 +63,16 @@
 <div class="setting">
     <div class="head" class:expanded on:contextmenu|preventDefault={toggleExpanded}>
         <div class="title">{$spaceSeperatedNames ? convertToSpacedString(cSetting.name) : cSetting.name}</div>
-        <div class="amount">{cSetting.value.length}/{cSetting.choices.length}</div>
+        <div class="amount">{(cSetting.value || []).length}/{(cSetting.choices || []).length}</div>
         <ExpandArrow bind:expanded/>
     </div>
 
     {#if expanded}
         <div class="choices" transition:slide|global={{duration: 200, axis: "y"}}>
-            {#each cSetting.choices as choice (choice)}
+            {#each cSetting.choices || [] as choice (choice)}
                 <div
                         class="choice"
-                        class:active={cSetting.value.includes(choice)}
+                        class:active={(cSetting.value || []).includes(choice)}
                         class:error={errorValue === choice}
                         on:click={() => {
                             handleChange(choice)

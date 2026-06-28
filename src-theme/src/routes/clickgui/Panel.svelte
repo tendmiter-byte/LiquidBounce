@@ -30,7 +30,7 @@
 
     let scrollPositionSaveTimeout: number | undefined;
 
-    const panelConfig = loadPanelConfig();
+    let panelConfig = loadPanelConfig();
 
     let ignoreGrid = false;
 
@@ -94,6 +94,7 @@
         offsetX = e.clientX * (2 / $scaleFactor) - panelConfig.left;
         offsetY = e.clientY * (2 / $scaleFactor) - panelConfig.top;
         panelConfig.zIndex = ++$maxPanelZIndex;
+        panelConfig = panelConfig;
         
         $showGrid = $snappingEnabled && !expandButtonElement.contains(e.target as HTMLElement);
     }
@@ -107,6 +108,7 @@
             panelConfig.top = snapToGrid(newTop);
 
             fixPosition();
+            panelConfig = panelConfig;
         }
     }
 
@@ -122,11 +124,13 @@
         panelConfig.expanded = !panelConfig.expanded;
 
         fixPosition();
+        panelConfig = panelConfig;
         savePanelConfig();
     }
 
     function handleModulesScroll() {
         panelConfig.scrollTop = modulesElement.scrollTop;
+        panelConfig = panelConfig;
 
         if (scrollPositionSaveTimeout !== undefined) {
             clearTimeout(scrollPositionSaveTimeout);
@@ -143,6 +147,7 @@
         if (highlightModule) {
             panelConfig.zIndex = ++$maxPanelZIndex;
             panelConfig.expanded = true;
+            panelConfig = panelConfig;
             savePanelConfig();
         }
     });

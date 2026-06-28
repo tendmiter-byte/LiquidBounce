@@ -1,5 +1,5 @@
 <script lang="ts">
-    import {createEventDispatcher} from "svelte";
+    import {createEventDispatcher, onMount} from "svelte";
     import type {ConfigurableSetting, ModuleSetting,} from "../../../integration/types";
     import GenericSetting from "./common/GenericSetting.svelte";
     import ExpandArrow from "./common/ExpandArrow.svelte";
@@ -20,9 +20,19 @@
         dispatch("change");
     }
 
-    let expanded = hideExpandControl ? true : localStorage.getItem(thisPath) === "true";
+    let expanded = hideExpandControl ? true : false;
+    let mounted = false;
 
-    $: setItem(thisPath, expanded.toString());
+    onMount(() => {
+        if (!hideExpandControl) {
+            expanded = localStorage.getItem(thisPath) === "true";
+        }
+        mounted = true;
+    });
+
+    $: if (mounted && !hideExpandControl) {
+        setItem(thisPath, expanded.toString());
+    }
 
     function toggleExpanded() {
         if (hideExpandControl) {
@@ -43,8 +53,8 @@
 
     {#if expanded}
         <div class="nested-settings">
-            {#each cSetting.value as setting (setting.name)}
-                <GenericSetting path={thisPath} bind:setting on:change={handleChange}/>
+            {#each cSetting.value || [] as setting (setting.name)}
+                <GenericSetting path={thisPath} bind:setting={setting} on:change={handleChange}/>
             {/each}
         </div>
     {/if}

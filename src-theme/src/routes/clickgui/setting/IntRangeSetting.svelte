@@ -11,7 +11,7 @@
 
     const dispatch = createEventDispatcher();
 
-    const cSetting = setting as IntRangeSetting;
+    $: cSetting = setting as IntRangeSetting;
 
     let slider: HTMLElement;
     let apiSlider: API;
@@ -42,6 +42,13 @@
             dispatch("change");
         });
     });
+
+    $: if (apiSlider && cSetting) {
+        const currentVal = apiSlider.get() as number[];
+        if (Math.round(currentVal[0]) !== cSetting.value.from || Math.round(currentVal[1]) !== cSetting.value.to) {
+            apiSlider.set([cSetting.value.from, cSetting.value.to]);
+        }
+    }
 </script>
 
 <div class="setting" class:has-suffix={cSetting.suffix !== ""}>

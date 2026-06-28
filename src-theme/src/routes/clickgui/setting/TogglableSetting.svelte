@@ -1,5 +1,5 @@
 <script lang="ts">
-    import {createEventDispatcher} from "svelte";
+    import {createEventDispatcher, onMount} from "svelte";
     import type {BooleanSetting as TBooleanSetting, ModuleSetting, TogglableSetting,} from "../../../integration/types";
     import ExpandArrow from "./common/ExpandArrow.svelte";
     import GenericSetting from "./common/GenericSetting.svelte";
@@ -15,13 +15,21 @@
 
     const dispatch = createEventDispatcher();
 
-    $: enabledSetting = cSetting.value[0] as TBooleanSetting;
+    $: enabledSetting = (cSetting.value && cSetting.value[0]) as TBooleanSetting;
 
-    $: nestedSettings = cSetting.value.slice(1);
+    $: nestedSettings = cSetting.value ? cSetting.value.slice(1) : [];
 
-    let expanded = localStorage.getItem(thisPath) === "true";
+    let expanded = false;
+    let mounted = false;
 
-    $: setItem(thisPath, expanded.toString());
+    onMount(() => {
+        expanded = localStorage.getItem(thisPath) === "true";
+        mounted = true;
+    });
+
+    $: if (mounted) {
+        setItem(thisPath, expanded.toString());
+    }
 
     function handleChange() {
         setting = { ...cSetting };
@@ -34,27 +42,29 @@
 </script>
 
 <div class="setting">
-    {#if nestedSettings.length > 0}
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div class="head expand" class:expanded on:contextmenu|preventDefault={toggleExpanded}>
-            <Switch
-                name={$spaceSeperatedNames ? convertToSpacedString(cSetting.name) : cSetting.name}
-                bind:value={enabledSetting.value}
-                on:change={handleChange}
-            />
-            <ExpandArrow bind:expanded />
-        </div>
-    {:else}
-        <div class="head" class:expanded>
-            <Switch
-                name={$spaceSeperatedNames ? convertToSpacedString(cSetting.name) : cSetting.name}
-                bind:value={enabledSetting.value}
-                on:change={handleChange}
-            />
-        </div>
+    {#if enabledSetting}
+        {#if nestedSettings.length > 0}
+            <!-- svelte-ignore a11y-no-static-element-interactions -->
+            <div class="head expand" class:expanded on:contextmenu|preventDefault={toggleExpanded}>
+                <Switch
+                    name={$spaceSeperatedNames ? convertToSpacedString(cSetting.name) : cSetting.name}
+                    bind:value={enabledSetting.value}
+                    on:change={handleChange}
+                />
+                <ExpandArrow bind:expanded />
+            </div>
+        {:else}
+            <div class="head" class:expanded>
+                <Switch
+                    name={$spaceSeperatedNames ? convertToSpacedString(cSetting.name) : cSetting.name}
+                    bind:value={enabledSetting.value}
+                    on:change={handleChange}
+                />
+            </div>
+        {/if}
     {/if}
 
-    {#if expanded}
+    {#if expanded && nestedSettings.length > 0}
         <div class="nested-settings">
             {#each nestedSettings as setting (setting.name)}
                 <GenericSetting  path={thisPath} bind:setting on:change={handleChange} />

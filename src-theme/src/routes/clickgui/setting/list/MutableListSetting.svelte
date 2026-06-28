@@ -31,16 +31,18 @@
 <div class="setting">
     <div class="name">{$spaceSeperatedNames ? convertToSpacedString(cSetting.name) : cSetting.name}</div>
     <SettingButton value="Add value" on:click={addValueIndex} />
-    {#if cSetting.value.length > 0}
-        <div class="inputs">
-            {#each cSetting.value as _, index}
-                <RemovableItem on:remove={() => removeValueIndex(index)}>
-                    <input type="text" class="value" spellcheck="false" placeholder={setting.name} bind:value={cSetting.value[index]}
-                           on:input={handleChange}>
-                </RemovableItem>
-            {/each}
-        </div>
-    {/if}
+    {#key cSetting.value}
+        {#if cSetting.value.length > 0}
+            <div class="inputs">
+                {#each cSetting.value as _, index}
+                    <RemovableItem on:remove={() => removeValueIndex(index)}>
+                        <input type="text" class="value" spellcheck="false" placeholder={setting.name} bind:value={cSetting.value[index]}
+                               on:change={handleChange}>
+                    </RemovableItem>
+                {/each}
+            </div>
+        {/if}
+    {/key}
 </div>
 
 <style lang="scss">
