@@ -27,7 +27,7 @@
             cSetting.value = cSetting.value.filter(b => b !== e.detail.value);
         }
 
-        setting = {...cSetting};
+        setting = setting;
         dispatch("change");
     }
 </script>

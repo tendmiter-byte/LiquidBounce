@@ -51,13 +51,21 @@
     });
 
     async function fetchModuleSettings() {
-        configurable = await getModuleSettings(name);
-        hasSettings = configurable.value.filter(v => v.name !== "Bind" && v.name !== "Hidden").length > 0;
+        try {
+            configurable = await getModuleSettings(name);
+            hasSettings = configurable.value.filter(v => v.name !== "Bind" && v.name !== "Hidden").length > 0;
+        } catch (err) {
+            console.error("Failed to fetch module settings", err);
+        }
     }
 
     async function updateModuleSettings() {
-        await setModuleSettings(name, configurable);
-        await fetchModuleSettings();
+        try {
+            await setModuleSettings(name, configurable);
+            await fetchModuleSettings();
+        } catch (err) {
+            console.error("Failed to update module settings", err);
+        }
     }
 
     async function toggleModule() {
@@ -104,32 +112,56 @@
         await setItem(path, expanded.toString());
     }
 
+    function isEqual(a: any, b: any): boolean {
+        if (a === b) return true;
+        if (a == null || b == null) return false;
+        if (typeof a !== typeof b) return false;
+        if (typeof a === "object") {
+            if (Array.isArray(a) && Array.isArray(b)) {
+                if (a.length !== b.length) return false;
+                for (let i = 0; i < a.length; i++) {
+                    if (!isEqual(a[i], b[i])) return false;
+                }
+                return true;
+            }
+            const keysA = Object.keys(a);
+            const keysB = Object.keys(b);
+            if (keysA.length !== keysB.length) return false;
+            for (const k of keysA) {
+                if (!isEqual(a[k], b[k])) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
     listen("valueChanged", (e) => {
         if (configurable) {
-            const hasSetting = (settings: ModuleSetting[]): boolean => {
+            const findSetting = (settings: ModuleSetting[]): ModuleSetting | null => {
                 for (const s of settings) {
                     if (s.name === e.value.name) {
-                        return true;
+                        return s;
                     }
                     if ((s.valueType === "CHOICE" || s.valueType === "TOGGLEABLE" || s.valueType === "CONFIGURABLE") && Array.isArray(s.value)) {
-                        if (hasSetting(s.value as ModuleSetting[])) {
-                            return true;
-                        }
+                        const found = findSetting(s.value as ModuleSetting[]);
+                        if (found) return found;
                     }
                     if (s.valueType === "CHOICE" && (s as any).choices) {
                         for (const choice of Object.values((s as any).choices) as ModuleSetting[]) {
                             if (choice.value && Array.isArray(choice.value)) {
-                                if (hasSetting(choice.value as ModuleSetting[])) {
-                                    return true;
-                                }
+                                const found = findSetting(choice.value as ModuleSetting[]);
+                                if (found) return found;
                             }
                         }
                     }
                 }
-                return false;
+                return null;
             };
-            if (hasSetting(configurable.value)) {
-                fetchModuleSettings();
+            const localSetting = findSetting(configurable.value);
+            if (localSetting) {
+                if (!isEqual(localSetting.value, e.value.value)) {
+                    fetchModuleSettings();
+                }
             }
         }
     });

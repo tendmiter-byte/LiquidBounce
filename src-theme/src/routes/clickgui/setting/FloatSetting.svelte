@@ -16,6 +16,8 @@
     let slider: HTMLElement;
     let apiSlider: API;
 
+    let userInteracting = false;
+
     onMount(() => {
         let step = 0.01;
 
@@ -41,19 +43,27 @@
             }
         });
 
+        apiSlider.on("start", () => {
+            userInteracting = true;
+        });
+
+        apiSlider.on("end", () => {
+            userInteracting = false;
+        });
+
         apiSlider.on("update", (values) => {
             const newValue = parseFloat(values[0].toString());
 
             cSetting.value = newValue;
-            setting = { ...cSetting };
+            setting = setting;
         });
 
-        apiSlider.on("set", () => {
+        apiSlider.on("change", () => {
             dispatch("change");
         });
     });
 
-    $: if (apiSlider && cSetting) {
+    $: if (apiSlider && cSetting && !userInteracting) {
         const currentVal = parseFloat(apiSlider.get() as string);
         if (Math.abs(currentVal - cSetting.value) > 1e-4) {
             apiSlider.set(cSetting.value, false);
@@ -65,7 +75,10 @@
     <div class="name">{$spaceSeperatedNames ? convertToSpacedString(cSetting.name) : cSetting.name}</div>
     <div class="value">
         <ValueInput valueType="float" value={cSetting.value}
-                    on:change={(e) => apiSlider.set(e.detail.value)}/>
+                    on:change={(e) => {
+                        apiSlider.set(e.detail.value);
+                        dispatch("change");
+                    }}/>
     </div>
     {#if cSetting.suffix !== ""}
         <div class="suffix">{cSetting.suffix}</div>

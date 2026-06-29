@@ -12,7 +12,7 @@
     const dispatch = createEventDispatcher();
 
     function handleChange() {
-        setting = {...cSetting};
+        setting = setting;
         dispatch("change");
     }
 

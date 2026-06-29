@@ -136,7 +136,7 @@
     }
 
     function handleChange() {
-        setting = {...cSetting};
+        setting = setting;
         dispatch("change");
     }
 </script>

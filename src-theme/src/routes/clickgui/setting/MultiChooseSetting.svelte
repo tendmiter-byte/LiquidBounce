@@ -37,7 +37,7 @@
             cSetting.value = [...values, v]
         }
 
-        setting = {...cSetting};
+        setting = setting;
         dispatch("change");
     }
 

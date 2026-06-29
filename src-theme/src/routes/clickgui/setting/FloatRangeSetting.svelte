@@ -16,6 +16,8 @@
     let slider: HTMLElement;
     let apiSlider: API;
 
+    let userInteracting = false;
+
     onMount(() => {
         let step = 0.01;
 
@@ -41,6 +43,14 @@
             }
         });
 
+        apiSlider.on("start", () => {
+            userInteracting = true;
+        });
+
+        apiSlider.on("end", () => {
+            userInteracting = false;
+        });
+
         apiSlider.on("update", values => {
             const newValue = values.map(v => v.toString()).map(v => parseFloat(v));
 
@@ -48,15 +58,15 @@
                 from: newValue[0],
                 to: newValue[1]
             };
-            setting = {...cSetting};
+            setting = setting;
         });
 
-        apiSlider.on("set", () => {
+        apiSlider.on("change", () => {
             dispatch("change");
         });
     });
 
-    $: if (apiSlider && cSetting) {
+    $: if (apiSlider && cSetting && !userInteracting) {
         const currentVal = apiSlider.get() as number[];
         if (Math.abs(currentVal[0] - cSetting.value.from) > 1e-4 || Math.abs(currentVal[1] - cSetting.value.to) > 1e-4) {
             apiSlider.set([cSetting.value.from, cSetting.value.to], false);
@@ -68,10 +78,16 @@
     <div class="name">{$spaceSeperatedNames ? convertToSpacedString(cSetting.name) : cSetting.name}</div>
     <div class="value">
         <ValueInput valueType="float" value={cSetting.value.from}
-                    on:change={(e) => apiSlider.set([e.detail.value, cSetting.value.to])}/>
+                    on:change={(e) => {
+                        apiSlider.set([e.detail.value, cSetting.value.to]);
+                        dispatch("change");
+                    }}/>
         -
         <ValueInput valueType="float" value={cSetting.value.to}
-                    on:change={(e) => apiSlider.set([cSetting.value.from, e.detail.value])}/>
+                    on:change={(e) => {
+                        apiSlider.set([cSetting.value.from, e.detail.value]);
+                        dispatch("change");
+                    }}/>
     </div>
     {#if cSetting.suffix !== ""}
         <div class="suffix">{cSetting.suffix}</div>

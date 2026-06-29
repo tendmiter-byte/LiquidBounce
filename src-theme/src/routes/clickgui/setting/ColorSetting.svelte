@@ -15,10 +15,11 @@
 
     let colorPicker: HTMLElement;
     let pickr: Pickr;
+    let userInteracting = false;
     let hidden = true;
 
     $: hex = rgbaToHex(intToRgba(cSetting.value));
-    $: if (pickr) {
+    $: if (pickr && !userInteracting) {
         const currentColor = pickr.getColor()?.toHEXA()?.toString();
         if (currentColor && currentColor.toLowerCase() !== hex.toLowerCase()) {
             pickr.setColor(hex, true);
@@ -52,19 +53,25 @@
         });
 
         pickr.on("change", (v: any) => {
+            userInteracting = true;
             hex = v.toHEXA().toString();
 
             const [r, g, b, a] = v.toRGBA();
             const rgba = [r, g, b, a * 255];
 
             cSetting.value = rgbaToInt(rgba);
-            setting = { ...cSetting };
+            setting = setting;
+        });
+
+        pickr.on("changestop", () => {
+            userInteracting = false;
             dispatch("change");
         });
     });
 
     function handleValueInput() {
         pickr.setColor(hex);
+        dispatch("change");
     }
 </script>
 

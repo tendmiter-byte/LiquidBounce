@@ -33,7 +33,7 @@
 
         binding = !binding;
 
-        setting = {...cSetting};
+        setting = setting;
 
         dispatch("change");
     }
@@ -55,7 +55,7 @@
             cSetting.value = UNKNOWN_KEY;
         }
 
-        setting = {...cSetting};
+        setting = setting;
 
         dispatch("change");
     });
@@ -73,7 +73,7 @@
 
         cSetting.value = e.key;
 
-        setting = {...cSetting};
+        setting = setting;
 
         dispatch("change");
     })
