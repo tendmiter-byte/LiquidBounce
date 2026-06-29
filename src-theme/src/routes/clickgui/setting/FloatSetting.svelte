@@ -56,7 +56,7 @@
     $: if (apiSlider && cSetting) {
         const currentVal = parseFloat(apiSlider.get() as string);
         if (Math.abs(currentVal - cSetting.value) > 1e-4) {
-            apiSlider.set(cSetting.value);
+            apiSlider.set(cSetting.value, false);
         }
     }
 </script>

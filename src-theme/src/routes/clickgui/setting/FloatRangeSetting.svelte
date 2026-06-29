@@ -59,7 +59,7 @@
     $: if (apiSlider && cSetting) {
         const currentVal = apiSlider.get() as number[];
         if (Math.abs(currentVal[0] - cSetting.value.from) > 1e-4 || Math.abs(currentVal[1] - cSetting.value.to) > 1e-4) {
-            apiSlider.set([cSetting.value.from, cSetting.value.to]);
+            apiSlider.set([cSetting.value.from, cSetting.value.to], false);
         }
     }
 </script>

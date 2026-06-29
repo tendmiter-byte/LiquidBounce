@@ -116,6 +116,15 @@
                             return true;
                         }
                     }
+                    if (s.valueType === "CHOICE" && (s as any).choices) {
+                        for (const choice of Object.values((s as any).choices) as ModuleSetting[]) {
+                            if (choice.value && Array.isArray(choice.value)) {
+                                if (hasSetting(choice.value as ModuleSetting[])) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
                 }
                 return false;
             };

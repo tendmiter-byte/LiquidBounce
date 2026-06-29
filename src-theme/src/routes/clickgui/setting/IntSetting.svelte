@@ -42,7 +42,7 @@
     $: if (apiSlider && cSetting) {
         const currentVal = Math.round(parseFloat(apiSlider.get() as string));
         if (currentVal !== cSetting.value) {
-            apiSlider.set(cSetting.value);
+            apiSlider.set(cSetting.value, false);
         }
     }
 </script>

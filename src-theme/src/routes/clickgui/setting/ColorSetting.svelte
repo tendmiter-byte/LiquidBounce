@@ -19,7 +19,10 @@
 
     $: hex = rgbaToHex(intToRgba(cSetting.value));
     $: if (pickr) {
-        pickr.setColor(hex, true);
+        const currentColor = pickr.getColor()?.toHEXA()?.toString();
+        if (currentColor && currentColor.toLowerCase() !== hex.toLowerCase()) {
+            pickr.setColor(hex, true);
+        }
     }
 
     onMount(() => {
