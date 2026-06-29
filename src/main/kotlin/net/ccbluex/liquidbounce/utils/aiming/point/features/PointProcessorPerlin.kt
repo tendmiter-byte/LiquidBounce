@@ -24,6 +24,8 @@ import net.ccbluex.liquidbounce.event.EventListener
 import net.ccbluex.liquidbounce.utils.aiming.point.PointInsideBox
 import net.ccbluex.liquidbounce.utils.entity.horizontalSpeed
 import net.ccbluex.liquidbounce.utils.kotlin.random
+import net.ccbluex.liquidbounce.utils.math.equals
+import net.minecraft.util.Mth.lerp
 import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.phys.Vec3
 import java.security.SecureRandom
@@ -147,20 +149,25 @@ internal class PointProcessorPerlin(parent: EventListener) : PointProcessor(pare
 
     private var time: Double = random.nextDouble() * 10000.0
     private var currentOffset: Vec3 = Vec3.ZERO
+    private var targetOffset: Vec3 = Vec3.ZERO
 
     private val yawFactor by floatRange("YawOffset", 0f..0f, 0.0f..1.0f)
     private val pitchFactor by floatRange("PitchOffset", 0f..0f, 0.0f..1.0f)
+    private val chance by int("Chance", 100, 0..100, "%")
     private val speed by floatRange("Speed", 0.1f..0.2f, 0.01f..1f)
+    private val tolerance by float("Tolerance", 0.05f, 0.01f..0.1f)
 
     private inner class Dynamic : ToggleableValueGroup(this, "Dynamic", false) {
         val hurtTime by int("HurtTime", 10, 0..10)
         val yawFactor by float("YawFactor", 0f, 0f..10f, "x")
         val pitchFactor by float("PitchFactor", 0f, 0f..10f, "x")
         val speed by floatRange("Speed", 0.5f..0.75f, 0.01f..1f)
+        val tolerance by float("Tolerance", 0.1f, 0.01f..0.1f)
     }
 
     private val dynamic = tree(Dynamic())
 
+    @Suppress("CognitiveComplexMethod")
     fun updatePerlinOffset(entity: Any?) {
         val dynamicCheck = dynamic.enabled && entity is LivingEntity && entity.hurtTime >= dynamic.hurtTime
 
@@ -178,24 +185,39 @@ internal class PointProcessorPerlin(parent: EventListener) : PointProcessor(pare
                 pitchFactor.random()
             }.toDouble()
 
-        val currentSpeed =
-            if (dynamicCheck) {
-                dynamic.speed.random().toDouble()
-            } else {
-                speed.random().toDouble()
+        if (currentOffset.equals(
+                targetOffset,
+                if (dynamicCheck) dynamic.tolerance.toDouble() else tolerance.toDouble()
+            )
+        ) {
+            if (random.nextInt(100) <= chance) {
+                val currentSpeed =
+                    if (dynamicCheck) {
+                        dynamic.speed.random().toDouble()
+                    } else {
+                        speed.random().toDouble()
+                    }
+
+                time += currentSpeed
+
+                targetOffset = Vec3(
+                    noise(time, 17.15, 42.84) * yawFactor,
+                    noise(time + 100.0, 55.32, 12.98) * pitchFactor,
+                    noise(time + 200.0, 93.11, 74.45) * yawFactor
+                )
             }
-
-        time += currentSpeed
-
-        val offsetX = noise(time, 17.15, 42.84) * yawFactor
-        val offsetY = noise(time + 100.0, 55.32, 12.98) * pitchFactor
-        val offsetZ = noise(time + 200.0, 93.11, 74.45) * yawFactor
-
-        currentOffset = Vec3(offsetX, offsetY, offsetZ)
+        } else {
+            val lerpSpeed = if (dynamicCheck) dynamic.speed.random().toDouble() else speed.random().toDouble()
+            currentOffset = Vec3(
+                lerp(lerpSpeed, currentOffset.x, targetOffset.x),
+                lerp(lerpSpeed, currentOffset.y, targetOffset.y),
+                lerp(lerpSpeed, currentOffset.z, targetOffset.z)
+            )
+        }
     }
 
     override fun process(point: PointInsideBox): PointInsideBox {
-        if (yawFactor.random() > 0.0f || pitchFactor.random() > 0.0f) {
+        if ((yawFactor.random() > 0.0f || pitchFactor.random() > 0.0f) && chance > 0) {
             updatePerlinOffset(point)
         }
 
