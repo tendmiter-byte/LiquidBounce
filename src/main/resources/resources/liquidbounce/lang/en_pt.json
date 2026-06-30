@@ -147,6 +147,8 @@
   "liquidbounce.module.spammer.description": "Spams teh chat wif pwe-defwinyed mwessages",
   "liquidbounce.module.fly.description": "Awwows u two fwy fwough teh aiw",
   "liquidbounce.module.freeze.description": "Awwows u two fweeze ywouwsewf wifwout teh sewwew knywowing",
+  "liquidbounce.module.fallFreeze.description": "Fweezes ye in pwace when ye stawt fawwin', awwowin' continuous mid-aiw cwiticaw hits.",
+  "liquidbounce.module.fallFreeze.messages.disabledOnFlag": "Moduwe disabwed due to fwag.",
   "liquidbounce.module.noClip.description": "Awwows u two muv fwough bwocks",
   "liquidbounce.module.noClip.messages.setbackDetected": "U hawe been set back by teh sewwew (⌒ω⌒) Make suwe u'we standing in a bwock (・`ω´・)",
   "liquidbounce.module.parkour.description": "Autwomaticawwy jumps at teh wewwy edge of a bwock",

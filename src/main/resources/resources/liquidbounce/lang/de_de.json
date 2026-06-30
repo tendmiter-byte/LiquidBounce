@@ -363,6 +363,8 @@
   "liquidbounce.module.flagCheck.messages.invalid": "Invalid",
   "liquidbounce.module.freeCam.description": "Ermöglicht dir, die Kamera aus deinem Körper zu bewegen.",
   "liquidbounce.module.freeze.description": "Ermöglicht dir, sich in deiner aktuellen Position einzufrieren, ohne dass der Server es merkt.",
+  "liquidbounce.module.fallFreeze.description": "Friert dich ein, wenn du anfängst zu fallen, was kontinuierliche kritische Treffer in der Luft ermöglicht.",
+  "liquidbounce.module.fallFreeze.messages.disabledOnFlag": "Modul aufgrund von Flag deaktiviert.",
   "liquidbounce.module.fucker.description": "Zerstört oder interagiert mit ausgewählten Blöcken um dich herum.",
   "liquidbounce.module.fullBright.description": "Macht die Welt zu einem helleren Ort.",
   "liquidbounce.module.ghostHand.description": "Ermöglicht die Interaktion mit ausgewählten Blöcken durch Wände.",

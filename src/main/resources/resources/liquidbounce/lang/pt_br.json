@@ -187,6 +187,8 @@
   "liquidbounce.module.spammer.description": "Spamma o chat com certas mensagens.",
   "liquidbounce.module.fly.description": "Deixa você voar no modo sobrevivencia.",
   "liquidbounce.module.freeze.description": "Deixa você parado na mesma posição sem o server saber.",
+  "liquidbounce.module.fallFreeze.description": "Congela você no lugar quando você começa a cair, permitindo acertos críticos contínuos no ar.",
+  "liquidbounce.module.fallFreeze.messages.disabledOnFlag": "Módulo desativado devido a flag.",
   "liquidbounce.module.noClip.description": "Deixa você andar dentro de blocos.",
   "liquidbounce.module.noClip.messages.setbackDetected": "você lagback pelo server! Tenha certeza que ja esta dentro de um bloco.",
   "liquidbounce.module.parkour.description": "Automaticamente pula no canto de um bloco.",
