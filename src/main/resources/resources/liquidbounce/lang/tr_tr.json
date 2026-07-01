@@ -383,7 +383,7 @@
   "liquidbounce.module.freeCam.description": "Kameranızı bedeninizden çıkarmanızı sağlar.",
   "liquidbounce.module.freeLook.description": "Kamerayı karakterinizin etrafında özgürce hareket ettirmenizi sağlar.",
   "liquidbounce.module.freeze.description": "Mevcut pozisyonunuzda sunucuya fark ettirmeden donmanızı sağlar.",
-  "liquidbounce.module.fallFreeze.description": "Düşmeye başladığınızda sizi yerinizde dondurarak havada sürekli kritik vuruşlar yapmanızı sağlar.",
+  "liquidbounce.module.fallFreeze.description": "Yerden belirli bir mesafe içinde düşerken sizi havada askıda tutar ve her KillAura saldırısının kritik vuruş olarak kaydedilmesini sağlar.",
   "liquidbounce.module.fallFreeze.messages.disabledOnFlag": "Flag nedeniyle modül devre dışı bırakıldı.",
   "liquidbounce.module.middleClickAction.messages.addedFriend": "%s arkadaş listesine başarıyla eklendi.",
   "liquidbounce.module.middleClickAction.description": "Orta tıklama ile eylemler yapmanızı sağlar.",

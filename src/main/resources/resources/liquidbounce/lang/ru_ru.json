@@ -475,7 +475,7 @@
   "liquidbounce.module.freeCam.description": "Позволяет свободно перемещать камеру",
   "liquidbounce.module.freeLook.description": "Позволяет свободно перемещать камеру вокруг вашего персонажа.",
   "liquidbounce.module.freeze.description": "Замораживает вас на одном месте.",
-  "liquidbounce.module.fallFreeze.description": "Замораживает вас на месте, когда вы начинаете падать, позволяя наносить непрерывные критические удары в воздухе.",
+  "liquidbounce.module.fallFreeze.description": "Удерживает вас в воздухе при падении в пределах заданного расстояния от земли, заставляя каждую атаку KillAura регистрироваться как критический удар.",
   "liquidbounce.module.fallFreeze.messages.disabledOnFlag": "Модуль отключен из-за флага.",
   "liquidbounce.module.fucker.description": "Ломает/использует выбранные блоки вокруг вас.",
   "liquidbounce.module.fullBright.description": "Делает мир ярче.",

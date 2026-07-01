@@ -198,7 +198,7 @@
   "liquidbounce.module.spammer.description": "Спамить у чат вказаними повідомленнями.",
   "liquidbounce.module.fly.description": "Дозволяє вам літати в режимі виживання.",
   "liquidbounce.module.freeze.description": "Дозволяє вам заморозити себе в одному місці без відома сервера.",
-  "liquidbounce.module.fallFreeze.description": "Заморожує вас на місці, коли ви починаєте падать, дозволяючи завдавати безперервних критичних ударів у повітрі.",
+  "liquidbounce.module.fallFreeze.description": "Утримує вас у повітрі при падінні в межах заданої відстані від землі, змушуючи кожну атаку KillAura реєструватися як критичний удар.",
   "liquidbounce.module.fallFreeze.messages.disabledOnFlag": "Модуль вимкнено через прапорець.",
   "liquidbounce.module.noClip.description": "Дозволяє вам літати крізь блоки.",
   "liquidbounce.module.noClip.messages.setbackDetected": "Сервер відкинув вас назад! Переконайтеся, що ви вже стоїте всередині блоку.",

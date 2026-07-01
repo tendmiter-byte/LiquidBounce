@@ -557,7 +557,7 @@
   "liquidbounce.module.freeLook.description": "允許你圍繞角色自由移動視角。",
   "liquidbounce.module.freeze.description": "允許在伺服器不知道的情況下將你凍結在你現在的位置。",
   "liquidbounce.module.freeze.messages.disabledOnFlag": "檢測到 S08 拉返，已自動關閉模組。",
-  "liquidbounce.module.fallFreeze.description": "在你開始下落時將你凍結在原地，以允許在空中持續造成暴擊。",
+  "liquidbounce.module.fallFreeze.description": "在你下落至離地面設定距離以內時將你懸停於空中，迫使每次 KillAura 攻擊都以暴擊形式命中。",
   "liquidbounce.module.fallFreeze.messages.disabledOnFlag": "由於反作弊拉回，模組已禁用。",
   "liquidbounce.module.middleClickAction.messages.addedFriend": "%s 已添加到好友列表。",
   "liquidbounce.module.middleClickAction.description": "允許你使用滑鼠中鍵執行額外操作。",

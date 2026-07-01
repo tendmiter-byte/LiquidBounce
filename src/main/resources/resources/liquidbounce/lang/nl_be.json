@@ -404,7 +404,7 @@
     "liquidbounce.module.freeCam.description": "Laat je de camera onafhankelijk van je lichaam bewegen.",
     "liquidbounce.module.freeLook.description": "Laat je vrij rondkijken zonder dat je speler draait.",
     "liquidbounce.module.freeze.description": "Zet je vast op je huidige positie zonder dat de server het merkt.",
-    "liquidbounce.module.fallFreeze.description": "Bevriest je op je plek wanneer je begint te vallen, wat continue kritieke slagen in de lucht mogelijk maakt.",
+    "liquidbounce.module.fallFreeze.description": "Houdt je in de lucht wanneer je binnen een ingestelde afstand van de grond valt, zodat elke KillAura-aanval als een kritieke slag wordt geregistreerd.",
     "liquidbounce.module.fallFreeze.messages.disabledOnFlag": "Module uitgeschakeld vanwege flag.",
     "liquidbounce.module.middleClickAction.messages.addedFriend": "%s is toegevoegd aan je vriendenlijst.",
     "liquidbounce.module.middleClickAction.description": "Laat je bepaalde acties uitvoeren via middelklik.",

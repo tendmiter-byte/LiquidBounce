@@ -7,48 +7,62 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
+ *
+ * LiquidBounce is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with LiquidBounce. If not, see <https://www.gnu.org/licenses/>.
  */
-package net.ccbluex.liquidbounce.features.module.modules.exploit
+package net.ccbluex.liquidbounce.features.module.modules.combat
 
-import net.ccbluex.liquidbounce.event.events.PlayerMoveEvent
 import net.ccbluex.liquidbounce.event.events.PacketEvent
+import net.ccbluex.liquidbounce.event.events.PlayerMoveEvent
 import net.ccbluex.liquidbounce.event.events.PlayerTickEvent
 import net.ccbluex.liquidbounce.event.events.TransferOrigin
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.ClientModule
 import net.ccbluex.liquidbounce.features.module.ModuleCategories
-import net.ccbluex.liquidbounce.utils.network.sendPacketSilently
-import net.ccbluex.liquidbounce.utils.entity.set
 import net.ccbluex.liquidbounce.utils.entity.movementForward
 import net.ccbluex.liquidbounce.utils.entity.movementSideways
+import net.ccbluex.liquidbounce.utils.entity.set
+import net.ccbluex.liquidbounce.utils.network.sendPacketSilently
+import net.ccbluex.liquidbounce.utils.raytracing.clip
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket
+import net.minecraft.world.level.ClipContext
 import net.minecraft.world.phys.Vec3
 
 /**
  * FallFreeze module
- * 
- * Freezes player coordinates when they start falling, keeping them suspended mid-air.
- * It spoof-maintains client fallDistance > 0 and sends onGround = false rotations
- * so that KillAura attacks register as critical hits continuously.
+ *
+ * Freezes the player's position when they are close to the ground while falling,
+ * keeping them suspended mid-air. This causes KillAura attacks to register as
+ * critical hits since the server sees the player as airborne (onGround = false)
+ * with positive fallDistance.
+ *
+ * Unlike a raw height offset, this module measures the actual distance from the
+ * solid ground directly beneath the player via a downward block raytrace.
  */
-object ModuleFallFreeze : ClientModule("FallFreeze", ModuleCategories.EXPLOIT, disableOnQuit = true) {
+object ModuleFallFreeze : ClientModule("FallFreeze", ModuleCategories.COMBAT, disableOnQuit = true) {
 
+    /**
+     * How many blocks above the ground the player must be (or less) when falling
+     * for the freeze to activate. Range 0.0–1.0 blocks.
+     */
+    private val distanceFromGround by float("DistanceFromGround", 0.42f, 0.0f..1.0f)
     private val disableOnFlag by boolean("DisableOnFlag", true)
-    private val freezeHeight by float("Height", 0.42f, 0.0f..1.5f)
 
     var isFrozen = false
         private set
 
     private var freezePos: Vec3? = null
-    private var lastGroundY = 0.0
 
     override fun onEnabled() {
         isFrozen = false
         freezePos = null
-        if (mc.level != null && mc.player != null) {
-            lastGroundY = player.y
-        }
         super.onEnabled()
     }
 
@@ -58,38 +72,51 @@ object ModuleFallFreeze : ClientModule("FallFreeze", ModuleCategories.EXPLOIT, d
         super.onDisabled()
     }
 
+    /**
+     * Returns the distance in blocks between the player's feet and the highest
+     * solid block directly below them, searched up to [maxDist] blocks down.
+     * If no block is found within that range, returns [maxDist].
+     */
+    private fun getDistanceToGround(maxDist: Double): Double {
+        val from = Vec3(player.x, player.y, player.z)
+        val to   = Vec3(player.x, player.y - maxDist, player.z)
+        val hit  = player.level().clip(from, to, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, player)
+        return player.y - hit.location.y
+    }
+
     @Suppress("unused")
     private val tickHandler = handler<PlayerTickEvent> {
+        // Reset when touching the ground
         if (player.onGround()) {
-            lastGroundY = player.y
             if (isFrozen) {
                 isFrozen = false
                 freezePos = null
             }
+            return@handler
         }
 
-        if (!player.onGround()) {
-            if (player.deltaMovement.y < 0.0 && (player.y - lastGroundY) <= freezeHeight.toDouble()) {
-                if (!isFrozen) {
-                    isFrozen = true
-                    val targetY = lastGroundY + freezeHeight.toDouble()
-                    freezePos = if (player.y > targetY) {
-                        Vec3(player.x, targetY, player.z)
-                    } else {
-                        player.position()
-                    }
-                }
+        // Activate freeze only while the player is falling downward
+        if (!isFrozen && player.deltaMovement.y < 0.0) {
+            val threshold = distanceFromGround.toDouble()
+            val dist = getDistanceToGround(threshold + 0.5)
+            if (dist <= threshold) {
+                isFrozen = true
+                freezePos = player.position()
             }
         }
 
         if (isFrozen) {
-            // Cancel all movement client-side to hover in place
-            player.deltaMovement = Vec3.ZERO
+            // Lock position client-side
             freezePos?.let { player.setPos(it) }
-            // Maintain fall distance so client combat modules allow crit logic
-            player.fallDistance = 0.2
 
-            // Reset input to prevent dynamic FOV changes when moving around
+            // Set a small downward velocity so CriticalsJump.shouldWaitForCrit()
+            // sees deltaMovement.y < -0.08 and does NOT block KillAura attacks.
+            player.deltaMovement = Vec3(0.0, -0.1, 0.0)
+
+            // Maintain positive fallDistance so wouldDoCriticalHit() returns true
+            player.fallDistance = 0.5
+
+            // Clear movement input to avoid FOV changes and unwanted momentum
             player.input.movementForward = 0f
             player.input.movementSideways = 0f
             player.input.set(
@@ -118,6 +145,7 @@ object ModuleFallFreeze : ClientModule("FallFreeze", ModuleCategories.EXPLOIT, d
 
         if (packet is ClientboundPlayerPositionPacket) {
             isFrozen = false
+            freezePos = null
             if (disableOnFlag) {
                 net.ccbluex.liquidbounce.utils.client.notification(
                     this.name,
@@ -132,17 +160,17 @@ object ModuleFallFreeze : ClientModule("FallFreeze", ModuleCategories.EXPLOIT, d
         if (isFrozen && event.origin == TransferOrigin.OUTGOING && packet is ServerboundMovePlayerPacket) {
             if (packet is ServerboundMovePlayerPacket.PosRot) {
                 event.cancelEvent()
-                // Send rotation-only to allow KillAura to aim/attack while keeping position locked
+                // Send rotation-only so KillAura can still aim and attack while
+                // position stays locked. onGround = false → server registers crits.
                 sendPacketSilently(
                     ServerboundMovePlayerPacket.Rot(
                         packet.getYRot(player.yRot),
                         packet.getXRot(player.xRot),
-                        false, // Enforce onGround = false on the server for crits
+                        false, // onGround = false for critical hits
                         player.horizontalCollision
                     )
                 )
             } else if (packet is ServerboundMovePlayerPacket.Pos) {
-                // Cancel position-only updates
                 event.cancelEvent()
             }
         }

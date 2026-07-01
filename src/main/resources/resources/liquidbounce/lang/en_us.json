@@ -557,7 +557,7 @@
   "liquidbounce.module.freeLook.description": "Allows you to move the camera freely around your character.",
   "liquidbounce.module.freeze.description": "Allows you to freeze yourself in your current position without the server knowing.",
   "liquidbounce.module.freeze.messages.disabledOnFlag": "Module disabled due to flag.",
-  "liquidbounce.module.fallFreeze.description": "Freezes you in place when you start falling, allowing continuous mid-air critical hits.",
+  "liquidbounce.module.fallFreeze.description": "Suspends you mid-air when falling within a set distance from the ground, forcing every KillAura attack to register as a critical hit.",
   "liquidbounce.module.fallFreeze.messages.disabledOnFlag": "Module disabled due to flag.",
   "liquidbounce.module.middleClickAction.messages.addedFriend": "%s was successfully added to the friends list.",
   "liquidbounce.module.middleClickAction.description": "Allows you to perform actions with middle clicks.",

@@ -346,7 +346,7 @@
 	"liquidbounce.module.freeCam.description": "体外への移動を許可します。",
 	"liquidbounce.module.freeze.description": "サーバーに知られることなく、現在の位置で自分自身をフリーズさせることができます。",
     "liquidbounce.module.freeze.messages.disabledOnFlag": "S08 フラグを検出し、モジュールを自動でオフにしました。",
-	"liquidbounce.module.fallFreeze.description": "落下時にその場にフリーズさせ、空中での連続クリティカルヒットを可能にします。",
+	"liquidbounce.module.fallFreeze.description": "地面からの距離が設定値以下になったときに空中で静止し、KillAuraの攻撃が常にクリティカルヒットとして登録されるようにします。",
 	"liquidbounce.module.fallFreeze.messages.disabledOnFlag": "フラグによりモジュールが無効化されました。",
 	"liquidbounce.module.friendClicker.addedFriend": " %s はフレンドリストに正常に追加されました。",
 	"liquidbounce.module.friendClicker.description": "クリックして友達を作ることができます。",
