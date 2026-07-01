@@ -6,7 +6,7 @@
     import {highlightModuleName} from "./clickgui_store";
     import {onMount} from "svelte";
     import {convertToSpacedString, spaceSeperatedNames} from "../../theme/theme_config";
-    import {isClickGuiScreen} from "../../util/utils";
+    import {isClickGuiScreen, handleClipboardShortcut} from "../../util/utils";
 
     export let modules: Module[];
 
@@ -95,10 +95,12 @@
         });
     }
 
-    function handleBrowserKeyDown(e: KeyboardEvent) {
+    async function handleBrowserKeyDown(e: KeyboardEvent) {
         if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Tab") {
             e.preventDefault();
         }
+        await handleClipboardShortcut(e, searchInputElement);
+        e.stopPropagation();
     }
 
     async function toggleModule(name: string, enabled: boolean) {
@@ -118,7 +120,10 @@
 
     function handleWindowKeyDown() {
         if (document.activeElement !== document.body) {
-            return;
+            const activeTag = document.activeElement?.tagName.toLowerCase();
+            if (activeTag === "input" || activeTag === "textarea" || (document.activeElement as HTMLElement)?.isContentEditable) {
+                return;
+            }
         }
 
         if (autoFocus) {
@@ -159,6 +164,12 @@
 
 <svelte:window on:click={handleWindowClick} on:keydown={handleWindowKeyDown} on:contextmenu={handleWindowClick}/>
 
+{#if query}
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <div class="search-backdrop" on:contextmenu|preventDefault|stopPropagation on:click|preventDefault|stopPropagation></div>
+{/if}
+
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
         class="search"
@@ -191,7 +202,7 @@
                             class="result"
                             class:enabled
                             on:click={() => toggleModule(name, !enabled)}
-                            on:contextmenu|preventDefault={() => $highlightModuleName = name}
+                            on:contextmenu|preventDefault|stopPropagation={() => $highlightModuleName = name}
                             class:selected={selectedIndex === index}
                             bind:this={resultElements[index]}
                     >
@@ -213,6 +224,15 @@
 </div>
 
 <style lang="scss">
+
+  .search-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 9999999998;
+  }
 
   .search {
     position: fixed;

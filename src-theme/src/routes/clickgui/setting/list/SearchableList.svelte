@@ -1,6 +1,8 @@
 <script lang="ts">
     import VirtualList from "./VirtualList.svelte";
     import type {NamedItem} from "../../../../integration/types.ts";
+    import {setTyping} from "../../../../integration/rest";
+    import {handleClipboardShortcut} from "../../../../util/utils";
 
     export let items: NamedItem[];
 
@@ -17,7 +19,10 @@
 </script>
 
 <div class="list-item-list">
-    <input type="text" placeholder="Search" class="search-input" bind:value={searchQuery} spellcheck="false">
+    <input type="text" placeholder="Search" class="search-input" bind:value={searchQuery} spellcheck="false"
+           on:keydown|stopPropagation={(e) => handleClipboardShortcut(e, e.currentTarget)}
+           on:focusin={async () => await setTyping(true)}
+           on:focusout={async () => await setTyping(false)}>
     <div class="results">
         <VirtualList items={renderedItems} let:item>
             <slot item={item} />

@@ -34,3 +34,43 @@ export function isAnniversary() {
 
     return now >= start && now <= end;
 }
+
+export async function handleClipboardShortcut(e: KeyboardEvent, input: HTMLInputElement) {
+    if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+            case 'c':
+                if (input.selectionStart !== input.selectionEnd) {
+                    try {
+                        await navigator.clipboard.writeText(input.value.substring(input.selectionStart!, input.selectionEnd!));
+                    } catch (err) {}
+                }
+                break;
+            case 'x':
+                if (input.selectionStart !== input.selectionEnd) {
+                    try {
+                        await navigator.clipboard.writeText(input.value.substring(input.selectionStart!, input.selectionEnd!));
+                        const start = input.selectionStart!;
+                        const end = input.selectionEnd!;
+                        input.value = input.value.substring(0, start) + input.value.substring(end);
+                        input.selectionStart = input.selectionEnd = start;
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                    } catch (err) {}
+                }
+                break;
+            case 'v':
+                try {
+                    const text = await navigator.clipboard.readText();
+                    const start = input.selectionStart!;
+                    const end = input.selectionEnd!;
+                    input.value = input.value.substring(0, start) + text + input.value.substring(end);
+                    input.selectionStart = input.selectionEnd = start + text.length;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                } catch (err) {}
+                break;
+            case 'a':
+                input.select();
+                e.preventDefault();
+                break;
+        }
+    }
+}

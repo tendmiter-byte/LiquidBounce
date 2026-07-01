@@ -3,6 +3,7 @@
     import type {ModuleSetting, TextSetting,} from "../../../integration/types";
     import {convertToSpacedString, spaceSeperatedNames} from "../../../theme/theme_config";
     import {setTyping} from "../../../integration/rest";
+    import {handleClipboardShortcut} from "../../../util/utils";
 
     export let setting: ModuleSetting;
 
@@ -22,6 +23,7 @@
            placeholder={$spaceSeperatedNames ? convertToSpacedString(cSetting.name) : cSetting.name}
            bind:value={cSetting.value}
            on:input={handleChange}
+           on:keydown|stopPropagation={(e) => handleClipboardShortcut(e, e.currentTarget)}
            on:focusin={async () => await setTyping(true)}
            on:focusout={async () => await setTyping(false)}
     >

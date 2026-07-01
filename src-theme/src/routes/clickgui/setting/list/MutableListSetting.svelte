@@ -4,6 +4,8 @@
     import {createEventDispatcher} from "svelte";
     import SettingButton from "../common/SettingButton.svelte";
     import RemovableItem from "../common/RemovableItem.svelte";
+    import {setTyping} from "../../../../integration/rest";
+    import {handleClipboardShortcut} from "../../../../util/utils";
 
     export let setting: ModuleSetting;
 
@@ -31,18 +33,19 @@
 <div class="setting">
     <div class="name">{$spaceSeperatedNames ? convertToSpacedString(cSetting.name) : cSetting.name}</div>
     <SettingButton value="Add value" on:click={addValueIndex} />
-    {#key cSetting.value}
-        {#if cSetting.value.length > 0}
-            <div class="inputs">
+    {#if cSetting.value.length > 0}
+        <div class="inputs">
                 {#each cSetting.value as _, index}
                     <RemovableItem on:remove={() => removeValueIndex(index)}>
                         <input type="text" class="value" spellcheck="false" placeholder={setting.name} bind:value={cSetting.value[index]}
-                               on:change={handleChange}>
+                               on:change={handleChange}
+                               on:keydown|stopPropagation={(e) => handleClipboardShortcut(e, e.currentTarget)}
+                               on:focusin={async () => await setTyping(true)}
+                               on:focusout={async () => await setTyping(false)}>
                     </RemovableItem>
                 {/each}
             </div>
-        {/if}
-    {/key}
+    {/if}
 </div>
 
 <style lang="scss">
