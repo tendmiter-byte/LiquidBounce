@@ -50,9 +50,9 @@ object ModuleFallFreeze : ClientModule("FallFreeze", ModuleCategories.COMBAT, di
 
     /**
      * How many blocks above the ground the player must be (or less) when falling
-     * for the freeze to activate. Range 0.0–1.0 blocks.
+     * for the freeze to activate. Range 0.1–1.0 blocks.
      */
-    private val distanceFromGround by float("DistanceFromGround", 0.42f, 0.0f..1.0f)
+    private val distanceFromGround by float("DistanceFromGround", 0.42f, 0.1f..1.0f)
     private val disableOnFlag by boolean("DisableOnFlag", true)
 
     var isFrozen = false
@@ -98,10 +98,14 @@ object ModuleFallFreeze : ClientModule("FallFreeze", ModuleCategories.COMBAT, di
         // Activate freeze only while the player is falling downward
         if (!isFrozen && player.deltaMovement.y < 0.0) {
             val threshold = distanceFromGround.toDouble()
-            val dist = getDistanceToGround(threshold + 0.5)
-            if (dist <= threshold) {
+            val maxFallDist = -player.deltaMovement.y
+            // Raytrace far enough to see the ground even when falling very fast
+            val dist = getDistanceToGround(Math.max(10.0, maxFallDist + threshold + 1.0))
+            
+            if (dist <= threshold || dist - maxFallDist <= threshold) {
                 isFrozen = true
-                freezePos = player.position()
+                val targetY = if (dist <= threshold) player.y else player.y - dist + threshold
+                freezePos = Vec3(player.x, targetY, player.z)
             }
         }
 
