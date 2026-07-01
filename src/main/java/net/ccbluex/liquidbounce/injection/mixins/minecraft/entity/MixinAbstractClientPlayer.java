@@ -23,6 +23,7 @@ import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 import com.mojang.authlib.GameProfile;
 import net.ccbluex.liquidbounce.features.module.modules.exploit.disabler.ModuleDisabler;
 import net.ccbluex.liquidbounce.features.module.modules.exploit.disabler.disablers.DisablerVulcanScaffold;
+import net.ccbluex.liquidbounce.features.module.modules.exploit.ModuleFallFreeze;
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleNoFov;
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleSkinChanger;
 import net.minecraft.client.Minecraft;
@@ -44,6 +45,9 @@ public abstract class MixinAbstractClientPlayer extends Player {
 
     @ModifyReturnValue(method = "getFieldOfViewModifier", at = @At("RETURN"))
     private float injectFovMultiplier(float original) {
+        if (ModuleFallFreeze.INSTANCE.getRunning() && ModuleFallFreeze.INSTANCE.isFrozen()) {
+            return 1.0f;
+        }
         if (ModuleNoFov.INSTANCE.getRunning()) {
             return ModuleNoFov.INSTANCE.getFovMultiplier(original);
         }
