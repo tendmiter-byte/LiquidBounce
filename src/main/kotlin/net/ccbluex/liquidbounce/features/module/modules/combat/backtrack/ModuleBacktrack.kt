@@ -75,7 +75,7 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
     private val delayMode by enumChoice("DelayMode", DelayMode.DYNAMIC)
     private val nextBacktrackDelay by intRange("NextBacktrackDelay", 0..10, 0..5000, "ms")
     private val trackingBuffer by int("TrackingBuffer", 500, 0..5000, "ms")
-    private val backtrackDistance by floatRange("BacktrackDistance", 0f..4.5f, 0f..10f)
+    private val hitDistance by floatRange("HitDistance", 0f..4.5f, 0f..10f)
     private val maxQueuedPackets by int("MaxQueuedPackets", 0, 0..1000)
     private val chance by float("Chance", 50f, 0f..100f, "%")
     private var currentChance = (0..100).random()
@@ -254,7 +254,11 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
 
         val target = target
         if (target != null) {
-            updateDistanceRate(target)
+            if (target.isRemoved || !target.isAlive) {
+                clear()
+            } else {
+                updateDistanceRate(target)
+            }
         } else {
             resetDistanceTracking()
         }
@@ -293,6 +297,12 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
     @Suppress("unused")
     private val rangeTargetHandler = handler<GameTickEvent> {
         if (targetMode != Mode.RANGE) return@handler
+
+        val currentTarget = target
+        if (currentTarget != null && shouldBacktrack(currentTarget)) {
+            processTarget(currentTarget)
+            return@handler
+        }
 
         val enemy = world.findEnemy(range)
 
@@ -357,6 +367,7 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
     }
 
     private fun shouldBacktrack(target: Entity): Boolean {
+        if (target.isRemoved) return false
         val inRange = target.boxedDistanceTo(player) in range
 
         if (inRange) {
@@ -443,7 +454,8 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
 
         val elapsedMs = (now - lastDistanceSampleTime).coerceAtLeast(1L)
         if (elapsedMs >= 50) {
-            currentDistanceRate = (distance - lastTargetDistance) / elapsedMs * 1000.0
+            val rawRate = (distance - lastTargetDistance) / elapsedMs * 1000.0
+            currentDistanceRate = 0.3 * rawRate + 0.7 * currentDistanceRate
             lastTargetDistance = distance
             lastDistanceSampleTime = now
         }
@@ -479,8 +491,8 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
     }
 
     private fun isTrackedPositionOutsideDistance(liveDistance: Double): Boolean {
-        val minDistance = backtrackDistance.start
-        val maxDistance = backtrackDistance.endInclusive
+        val minDistance = hitDistance.start
+        val maxDistance = hitDistance.endInclusive
 
         return liveDistance < minDistance || liveDistance > maxDistance
     }
@@ -506,7 +518,7 @@ object ModuleBacktrack : ClientModule("Backtrack", ModuleCategories.COMBAT) {
     private fun shouldPause() = pauseOnHurtTime.enabled && shouldPause
 
     fun shouldCancelPackets() =
-        target?.let { target -> target.isAlive && shouldBacktrack(target) } == true
+        target?.let { target -> target.isAlive && !target.isRemoved && shouldBacktrack(target) } == true
 
     private fun hasQueuedIncoming() =
         BlinkManager.hasQueuedPackets(TransferOrigin.INCOMING)
