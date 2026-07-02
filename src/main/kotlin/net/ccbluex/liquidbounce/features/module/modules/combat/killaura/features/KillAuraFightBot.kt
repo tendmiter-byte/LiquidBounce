@@ -162,15 +162,9 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             level = world,
             startX = start.x, startY = start.y + 0.5, startZ = start.z,
             endX = destination.x, endY = destination.y + 0.5, endZ = destination.z,
-            allowStartInside = true
-        ) { packed ->
-            val px = BlockPos.getX(packed)
-            val py = BlockPos.getY(packed)
-            val pz = BlockPos.getZ(packed)
-            val p = threadLocalPos.get().set(px, py, pz)
-            val state = world.getBlockState(p)
-            !state.getCollisionShape(world, p).isEmpty
-        }
+            allowStartInside = true,
+            isSolid = ::isBlockSolidOrHazardous
+        )
 
         if (straightClear) {
             return destination
@@ -219,6 +213,28 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         return movementRotation.copy(pitch = movementPitch)
     }
 
+    private inline fun isBlockSolidOrHazardous(packed: Long): Boolean {
+        val px = BlockPos.getX(packed)
+        val py = BlockPos.getY(packed)
+        val pz = BlockPos.getZ(packed)
+        val p = threadLocalPos.get().set(px, py, pz)
+        val state = world.getBlockState(p)
+        val block = state.block
+
+        val fluid = world.getFluidState(p)
+        val isLava = fluid.`is`(net.minecraft.world.level.material.Fluids.LAVA) ||
+                fluid.`is`(net.minecraft.world.level.material.Fluids.FLOWING_LAVA)
+
+        val isHazard = block is net.minecraft.world.level.block.BaseFireBlock ||
+                block is net.minecraft.world.level.block.CampfireBlock ||
+                block is net.minecraft.world.level.block.CactusBlock ||
+                block is net.minecraft.world.level.block.MagmaBlock ||
+                block is net.minecraft.world.level.block.SweetBerryBushBlock ||
+                block is net.minecraft.world.level.block.WitherRoseBlock
+
+        return !state.getCollisionShape(world, p).isEmpty || isLava || isHazard
+    }
+
     private fun calculateLeaderGoalPosition(leaderPosition: Vec3, playerPosition: Vec3): Vec3 {
         return (-180..180 step 45)
             .mapNotNull { yaw ->
@@ -229,15 +245,9 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                     level = world,
                     startX = playerPosition.x, startY = playerPosition.y + 0.5, startZ = playerPosition.z,
                     endX = position.x, endY = position.y + 0.5, endZ = position.z,
-                    allowStartInside = true
-                ) { packed ->
-                    val px = BlockPos.getX(packed)
-                    val py = BlockPos.getY(packed)
-                    val pz = BlockPos.getZ(packed)
-                    val p = threadLocalPos.get().set(px, py, pz)
-                    val state = world.getBlockState(p)
-                    !state.getCollisionShape(world, p).isEmpty
-                }
+                    allowStartInside = true,
+                    isSolid = ::isBlockSolidOrHazardous
+                )
 
                 if (!pathClear) {
                     return@mapNotNull null
@@ -280,15 +290,9 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                     level = world,
                     startX = start.x, startY = start.y + 0.5, startZ = start.z,
                     endX = position.x, endY = position.y + 0.5, endZ = position.z,
-                    allowStartInside = true
-                ) { packed ->
-                    val px = BlockPos.getX(packed)
-                    val py = BlockPos.getY(packed)
-                    val pz = BlockPos.getZ(packed)
-                    val p = threadLocalPos.get().set(px, py, pz)
-                    val state = world.getBlockState(p)
-                    !state.getCollisionShape(world, p).isEmpty
-                }
+                    allowStartInside = true,
+                    isSolid = ::isBlockSolidOrHazardous
+                )
 
                 if (!pathClear) {
                     return@mapNotNull null

@@ -50,12 +50,45 @@ interface AStarPathBuilder {
 
     val stopRange: Double get() = 2.0
 
+    private fun isHazardous(pos: BlockPos): Boolean {
+        val state = world.getBlockState(pos)
+        val block = state.block
+
+        val fluid = world.getFluidState(pos)
+        if (fluid.`is`(net.minecraft.world.level.material.Fluids.LAVA) ||
+            fluid.`is`(net.minecraft.world.level.material.Fluids.FLOWING_LAVA)
+        ) {
+            return true
+        }
+
+        if (block is net.minecraft.world.level.block.BaseFireBlock ||
+            block is net.minecraft.world.level.block.CampfireBlock ||
+            block is net.minecraft.world.level.block.CactusBlock ||
+            block is net.minecraft.world.level.block.MagmaBlock ||
+            block is net.minecraft.world.level.block.SweetBerryBushBlock ||
+            block is net.minecraft.world.level.block.WitherRoseBlock
+        ) {
+            return true
+        }
+
+        return false
+    }
+
     private val Vec3i.isPassable: Boolean
         get() {
             val box = AABB(x.toDouble(), y.toDouble(), z.toDouble(), x + 1.0, y + 2.0, z + 1.0)
 
             // 1. no block collision
             if (!world.getBlockCollisions(player, box).allEmpty()) return false
+
+            // 2. no hazards (lava, magma, fire, cactus, sweet berry bush, wither rose)
+            val mutablePos = BlockPos.MutableBlockPos()
+            if (isHazardous(mutablePos.set(x, y, z)) ||
+                isHazardous(mutablePos.set(x, y + 1, z)) ||
+                isHazardous(mutablePos.set(x, y - 1, z))
+            ) {
+                return false
+            }
 
             return true
         }
