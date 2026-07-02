@@ -34,6 +34,8 @@ import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket
 import net.minecraft.world.level.ClipContext
 import net.minecraft.world.phys.Vec3
+import net.ccbluex.liquidbounce.event.events.AttackEntityEvent
+import net.minecraft.world.entity.LivingEntity
 
 /**
  * FallFreeze module
@@ -53,22 +55,26 @@ object ModuleFallFreeze : ClientModule("FallFreeze", ModuleCategories.COMBAT, di
      * for the freeze to activate. Range 0.1–1.0 blocks.
      */
     private val distanceFromGround by float("DistanceFromGround", 0.42f, 0.1f..1.0f)
+    private val hitsUntilUnfreeze by int("HitsUntilUnfreeze", 0, 0..10)
     private val disableOnFlag by boolean("DisableOnFlag", true)
 
     var isFrozen = false
         private set
 
     private var freezePos: Vec3? = null
+    private var hitCount = 0
 
     override fun onEnabled() {
         isFrozen = false
         freezePos = null
+        hitCount = 0
         super.onEnabled()
     }
 
     override fun onDisabled() {
         isFrozen = false
         freezePos = null
+        hitCount = 0
         super.onDisabled()
     }
 
@@ -140,6 +146,19 @@ object ModuleFallFreeze : ClientModule("FallFreeze", ModuleCategories.COMBAT, di
     private val moveHandler = handler<PlayerMoveEvent> { event ->
         if (isFrozen) {
             event.movement = Vec3.ZERO
+        }
+    }
+
+    @Suppress("unused")
+    private val attackHandler = handler<AttackEntityEvent> { event ->
+        if (isFrozen && event.entity is LivingEntity) {
+            hitCount++
+            val limit = hitsUntilUnfreeze
+            if (limit > 0 && hitCount >= limit) {
+                isFrozen = false
+                freezePos = null
+                hitCount = 0
+            }
         }
     }
 

@@ -28,6 +28,10 @@ import net.ccbluex.liquidbounce.event.tickHandler
 import net.ccbluex.liquidbounce.features.module.ClientModule
 import net.ccbluex.liquidbounce.features.module.ModuleCategories
 import net.ccbluex.liquidbounce.features.module.modules.combat.ModuleAutoWeapon
+import net.ccbluex.liquidbounce.features.module.modules.combat.ModuleFallFreeze
+import net.ccbluex.liquidbounce.utils.client.network
+import net.ccbluex.liquidbounce.utils.network.MovePacketType
+import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.VisualsValueGroup.showCriticals
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.CriticalsSelectionMode
 import net.ccbluex.liquidbounce.features.module.modules.combat.elytratarget.ModuleElytraTarget
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.KillAuraRotationsValueGroup.KillAuraRotationTiming.ON_TICK
@@ -299,6 +303,21 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
                 }
 
                 // Attack enemy
+                if (ModuleFallFreeze.running && ModuleFallFreeze.isFrozen) {
+                    val p = { mod: Double -> 
+                        network.send(MovePacketType.FULL.generatePacket().apply {
+                            this.y += mod
+                            this.onGround = false
+                        })
+                    }
+                    p(0.11)
+                    p(0.1100013579)
+                    p(0.0000013579)
+                    if (target is LivingEntity) {
+                        showCriticals(target)
+                    }
+                }
+                
                 attackEntity(target, SwingMode.DO_NOT_HIDE, keepSprint && !shouldBlockSprinting)
                 range.update()
                 KillAuraNotifyWhenFail.failedHitsIncrement = 0
@@ -465,7 +484,7 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
             return false
         }
 
-        val criticalHitAllowed = target == null || player.isFallFlying || criticalsSelectionMode.isCriticalHit(target)
+        val criticalHitAllowed = target == null || player.isFallFlying || (ModuleFallFreeze.running && ModuleFallFreeze.isFrozen) || criticalsSelectionMode.isCriticalHit(target)
         if (!criticalHitAllowed) {
             return false
         }
