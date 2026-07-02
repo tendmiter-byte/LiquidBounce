@@ -25,7 +25,7 @@ import net.ccbluex.liquidbounce.event.events.WorldRenderEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.render.drawBox
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
-import net.ccbluex.liquidbounce.render.renderEnvironmentForWorld
+import net.ccbluex.liquidbounce.render.renderEnvironment
 import net.ccbluex.liquidbounce.render.withPositionRelativeToCamera
 import net.ccbluex.liquidbounce.utils.math.worldToLocal
 import net.minecraft.world.entity.Entity
@@ -52,13 +52,12 @@ class AimbotArtificialBoundingBox(
         private val color by color("Color", Color4b.CYAN.with(a = 50))
         private val outlineColor by color("OutlineColor", Color4b.CYAN.with(a = 150))
 
-        @Suppress("unused")
         private val renderHandler = handler<WorldRenderEvent> { event ->
             if (!enabled || !shouldDraw()) {
                 return@handler
             }
 
-            renderEnvironmentForWorld(event.matrixStack) {
+            event.renderEnvironment {
                 val partialTicks = event.partialTicks
 
                 for (entity in targets()) {
@@ -67,9 +66,9 @@ class AimbotArtificialBoundingBox(
 
                     withPositionRelativeToCamera(origin) {
                         drawBox(
-                            box = localBox,
-                            faceColor = color,
-                            outlineColor = outlineColor,
+                            localBox,
+                            color,
+                            outlineColor,
                         )
                     }
                 }
