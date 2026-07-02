@@ -16,7 +16,10 @@
     let slider: HTMLElement;
     let apiSlider: API;
 
-    let userInteracting = false;
+    let isDragging = false;
+    let isFocused = false;
+
+    $: userInteracting = isDragging || isFocused;
 
     onMount(() => {
         apiSlider = noUiSlider.create(slider, {
@@ -30,11 +33,11 @@
         });
 
         apiSlider.on("start", () => {
-            userInteracting = true;
+            isDragging = true;
         });
 
         apiSlider.on("end", () => {
-            userInteracting = false;
+            isDragging = false;
         });
 
         apiSlider.on("update", values => {
@@ -79,7 +82,7 @@
     {#if cSetting.suffix !== ""}
         <div class="suffix">{cSetting.suffix}</div>
     {/if}
-    <div bind:this={slider} class="slider"></div>
+    <div bind:this={slider} class="slider" on:focusin={() => isFocused = true} on:focusout={() => isFocused = false}></div>
 </div>
 
 <style lang="scss">

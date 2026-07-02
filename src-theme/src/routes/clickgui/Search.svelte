@@ -13,7 +13,7 @@
     let resultElements: HTMLElement[] = [];
     let searchContainerElement: HTMLElement;
     let autoFocus: boolean = true
-    let searchInputElement: HTMLElement;
+    let searchInputElement: HTMLInputElement;
     let query: string;
     let filteredModules: Module[] = [];
     let selectedIndex = 0;
@@ -118,10 +118,20 @@
         reset();
     }
 
-    function handleWindowKeyDown() {
+    function handleWindowKeyDown(e: KeyboardEvent) {
+        // Only focus search bar on printable characters (length === 1) and not with modifiers (except Shift)
+        if (e.key.length !== 1 || e.ctrlKey || e.altKey || e.metaKey) {
+            return;
+        }
+
         if (document.activeElement !== document.body) {
             const activeTag = document.activeElement?.tagName.toLowerCase();
-            if (activeTag === "input" || activeTag === "textarea" || (document.activeElement as HTMLElement)?.isContentEditable) {
+            if (
+                activeTag === "input" ||
+                activeTag === "textarea" ||
+                (activeTag === "button" && e.key === " ") ||
+                (document.activeElement as HTMLElement)?.isContentEditable
+            ) {
                 return;
             }
         }
