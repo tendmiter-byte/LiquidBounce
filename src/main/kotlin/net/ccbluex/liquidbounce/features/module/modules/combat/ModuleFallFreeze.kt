@@ -181,6 +181,7 @@ object ModuleFallFreeze : ClientModule("FallFreeze", ModuleCategories.COMBAT, di
         }
 
         if (isFrozen && event.origin == TransferOrigin.OUTGOING && packet is ServerboundMovePlayerPacket) {
+            packet.onGround = false
             if (packet is ServerboundMovePlayerPacket.PosRot) {
                 event.cancelEvent()
                 // Send rotation-only so KillAura can still aim and attack while
