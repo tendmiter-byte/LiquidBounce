@@ -73,6 +73,8 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
     private val opponentRange by float("OpponentRange", 3f, 0.1f..10f)
     private val dangerousYawDiff by float("DangerousYaw", 55f, 0f..90f, suffix = "°")
     private val runawayOnCooldown by boolean("RunawayOnCooldown", true)
+    private val pathfindingRange by float("PathfindingRange", 15f, 2f..50f)
+    private val directRange by float("DirectRange", 4f, 1f..10f)
 
     internal object TargetFilter : ValueGroup("TargetFilter") {
         internal var range by float("Range", 50f, 10f..100f)
@@ -166,16 +168,24 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             isSolid = ::isBlockSolidOrHazardous
         )
 
-        if (straightClear) {
+        val distance = if (context.combatTarget != null) {
+            player.distanceTo(context.combatTarget.entity)
+        } else {
+            context.playerPosition.distanceTo(destination)
+        }
+
+        if (straightClear && distance <= directRange) {
             return destination
         }
 
-        val startPos = player.blockPosition()
-        val endPos = BlockPos(floor(destination.x).toInt(), floor(destination.y).toInt(), floor(destination.z).toInt())
-        val path = findPath(startPos, endPos, maxCost = 40)
-        if (path.isNotEmpty()) {
-            val nextNode = path.first()
-            return Vec3(nextNode.x + 0.5, nextNode.y.toDouble(), nextNode.z + 0.5)
+        if (distance <= pathfindingRange) {
+            val startPos = player.blockPosition()
+            val endPos = BlockPos(floor(destination.x).toInt(), floor(destination.y).toInt(), floor(destination.z).toInt())
+            val path = findPath(startPos, endPos, maxCost = 40)
+            if (path.isNotEmpty()) {
+                val nextNode = path.first()
+                return Vec3(nextNode.x + 0.5, nextNode.y.toDouble(), nextNode.z + 0.5)
+            }
         }
 
         return destination
