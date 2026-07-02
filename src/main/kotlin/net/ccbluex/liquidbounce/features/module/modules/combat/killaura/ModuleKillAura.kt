@@ -107,6 +107,10 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
     // Bypass techniques
     internal val raycast by enumChoice("Raycast", TRACE_ALL)
     private val criticalsSelectionMode by enumChoice("Criticals", CriticalsSelectionMode.SMART)
+
+    val isCriticalsEnabled: Boolean
+        get() = criticalsSelectionMode != CriticalsSelectionMode.IGNORE
+
     private val keepSprint by boolean("KeepSprint", true)
 
     // Inventory Handling
