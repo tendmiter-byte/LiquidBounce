@@ -34,6 +34,9 @@ import net.ccbluex.liquidbounce.utils.entity.squaredBoxedDistanceTo
 import net.ccbluex.liquidbounce.utils.math.fma
 import net.ccbluex.liquidbounce.utils.math.sq
 import net.ccbluex.liquidbounce.utils.navigation.NavigationBaseValueGroup
+import net.ccbluex.liquidbounce.utils.raytracing.PathfinderRaycast
+import net.ccbluex.liquidbounce.utils.raytracing.threadLocalPos
+import net.minecraft.core.BlockPos
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.phys.Vec3
 import kotlin.math.min
@@ -186,6 +189,25 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             .mapNotNull { yaw ->
                 val rotation = Rotation(yaw = yaw.toFloat(), pitch = 0.0F)
                 val position = leaderPosition.fma(LeaderFollower.radius.toDouble(), rotation.directionVector)
+
+                val pathClear = PathfinderRaycast.hasLineOfSight(
+                    level = world,
+                    startX = playerPosition.x, startY = playerPosition.y + 0.5, startZ = playerPosition.z,
+                    endX = position.x, endY = position.y + 0.5, endZ = position.z,
+                    allowStartInside = true
+                ) { packed ->
+                    val px = BlockPos.getX(packed)
+                    val py = BlockPos.getY(packed)
+                    val pz = BlockPos.getZ(packed)
+                    val p = threadLocalPos.get().set(px, py, pz)
+                    val state = world.getBlockState(p)
+                    !state.getCollisionShape(world, p).isEmpty
+                }
+
+                if (!pathClear) {
+                    return@mapNotNull null
+                }
+
                 ModuleDebug.debugGeometry(
                     this,
                     "Possible Position $yaw",
@@ -215,6 +237,25 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
                 // Check if this point collides with a block
                 if (player.doesCollideAt(position)) {
+                    return@mapNotNull null
+                }
+
+                val start = context.playerPosition
+                val pathClear = PathfinderRaycast.hasLineOfSight(
+                    level = world,
+                    startX = start.x, startY = start.y + 0.5, startZ = start.z,
+                    endX = position.x, endY = position.y + 0.5, endZ = position.z,
+                    allowStartInside = true
+                ) { packed ->
+                    val px = BlockPos.getX(packed)
+                    val py = BlockPos.getY(packed)
+                    val pz = BlockPos.getZ(packed)
+                    val p = threadLocalPos.get().set(px, py, pz)
+                    val state = world.getBlockState(p)
+                    !state.getCollisionShape(world, p).isEmpty
+                }
+
+                if (!pathClear) {
                     return@mapNotNull null
                 }
 
