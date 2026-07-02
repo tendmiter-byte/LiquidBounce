@@ -54,8 +54,6 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
      */
     private val combatOnly by boolean("Combat", false)
 
-    private val autoEnable by boolean("AutoEnable", true)
-
     private sealed class LockMode(name: String) : Mode(name) {
         override val parent: ModeValueGroup<*>
             get() = mode
@@ -120,20 +118,16 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
     fun isListedUsername(name: String): Boolean = Filter.isListedUsername(name)
 
     fun addListedUsername(name: String): Boolean {
-        ensureFilterModeActive(enableModule = true)
+        ensureFilterModeActive()
         return Filter.addListedUsername(name)
     }
 
     fun removeListedUsername(name: String): Boolean {
-        ensureFilterModeActive(enableModule = true)
+        ensureFilterModeActive()
         return Filter.removeListedUsername(name)
     }
 
-    private fun ensureFilterModeActive(enableModule: Boolean) {
-        if (enableModule && autoEnable && !enabled) {
-            enabled = true
-        }
-
+    private fun ensureFilterModeActive() {
         if (mode.activeMode !== Filter) {
             mode.setByString(Filter.tag)
         }
