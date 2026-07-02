@@ -34,11 +34,13 @@ import net.ccbluex.liquidbounce.utils.entity.squaredBoxedDistanceTo
 import net.ccbluex.liquidbounce.utils.math.fma
 import net.ccbluex.liquidbounce.utils.math.sq
 import net.ccbluex.liquidbounce.utils.navigation.NavigationBaseValueGroup
+import net.ccbluex.liquidbounce.utils.block.AStarPathBuilder
 import net.ccbluex.liquidbounce.utils.raytracing.PathfinderRaycast
 import net.ccbluex.liquidbounce.utils.raytracing.threadLocalPos
 import net.minecraft.core.BlockPos
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.phys.Vec3
+import kotlin.math.floor
 import kotlin.math.min
 
 /**
@@ -62,7 +64,11 @@ data class CombatTarget(
 /**
  * A fight bot that handles combat and movement automatically
  */
-object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura, "FightBot", false) {
+object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura, "FightBot", false), AStarPathBuilder {
+
+    override val allowDiagonal: Boolean get() = true
+    override val maxIterations: Int get() = 500
+    override val stopRange: Double get() = 1.5
 
     private val opponentRange by float("OpponentRange", 3f, 0.1f..10f)
     private val dangerousYawDiff by float("DangerousYaw", 55f, 0f..90f, suffix = "°")
@@ -135,21 +141,50 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
      * @return Target position as Vec3d
      */
     override fun calculateGoalPosition(context: CombatContext): Vec3? {
-        // Try to follow leader first
-        if (LeaderFollower.running && LeaderFollower.username.isNotEmpty()) {
+        val destination = if (LeaderFollower.running && LeaderFollower.username.isNotEmpty()) {
             val leader = world.players().find { it.gameProfile.name == LeaderFollower.username }
             if (leader != null) {
-                return calculateLeaderGoalPosition(leader.position(), context.playerPosition)
+                calculateLeaderGoalPosition(leader.position(), context.playerPosition)
+            } else {
+                null
             }
+        } else {
+            val combatTarget = context.combatTarget ?: return null
+            if (runawayOnCooldown && !clicker.willClickAt()) {
+                calculateRunawayPosition(context, combatTarget)
+            } else {
+                calculateAttackPosition(context, combatTarget)
+            }
+        } ?: return null
+
+        val start = context.playerPosition
+        val straightClear = PathfinderRaycast.hasLineOfSight(
+            level = world,
+            startX = start.x, startY = start.y + 0.5, startZ = start.z,
+            endX = destination.x, endY = destination.y + 0.5, endZ = destination.z,
+            allowStartInside = true
+        ) { packed ->
+            val px = BlockPos.getX(packed)
+            val py = BlockPos.getY(packed)
+            val pz = BlockPos.getZ(packed)
+            val p = threadLocalPos.get().set(px, py, pz)
+            val state = world.getBlockState(p)
+            !state.getCollisionShape(world, p).isEmpty
         }
 
-        // Otherwise handle combat movement
-        val combatTarget = context.combatTarget ?: return null
-        return if (runawayOnCooldown && !clicker.willClickAt()) {
-            calculateRunawayPosition(context, combatTarget)
-        } else {
-            calculateAttackPosition(context, combatTarget)
+        if (straightClear) {
+            return destination
         }
+
+        val startPos = player.blockPosition()
+        val endPos = BlockPos(floor(destination.x).toInt(), floor(destination.y).toInt(), floor(destination.z).toInt())
+        val path = findPath(startPos, endPos, maxCost = 40)
+        if (path.isNotEmpty()) {
+            val nextNode = path.first()
+            return Vec3(nextNode.x + 0.5, nextNode.y.toDouble(), nextNode.z + 0.5)
+        }
+
+        return destination
     }
 
     /**
