@@ -169,7 +169,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         )
 
         val distance = if (context.combatTarget != null) {
-            player.distanceTo(context.combatTarget.entity)
+            player.distanceTo(context.combatTarget.entity).toDouble()
         } else {
             context.playerPosition.distanceTo(destination)
         }

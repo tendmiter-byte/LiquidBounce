@@ -302,6 +302,7 @@ object PathfinderRaycast {
         return hasLineOfSight(level, sx, sy, sz, ex, ey, ez, allowStartInside, isSolid)
     }
 
+    @JvmName("raycastBlockState")
     inline fun raycast(
         level: Level,
         startX: Double, startY: Double, startZ: Double,
@@ -313,7 +314,7 @@ object PathfinderRaycast {
         val mutablePos = threadLocalPos.get()
         return raycast(
             level, startX, startY, startZ, endX, endY, endZ, allowStartInside,
-            { packed ->
+            { packed: Long ->
                 val px = BlockPos.getX(packed)
                 val py = BlockPos.getY(packed)
                 val pz = BlockPos.getZ(packed)
@@ -324,6 +325,7 @@ object PathfinderRaycast {
         )
     }
 
+    @JvmName("hasLineOfSightBlockState")
     inline fun hasLineOfSight(
         level: Level,
         startX: Double, startY: Double, startZ: Double,
@@ -334,7 +336,7 @@ object PathfinderRaycast {
         val mutablePos = threadLocalPos.get()
         return hasLineOfSight(
             level, startX, startY, startZ, endX, endY, endZ, allowStartInside,
-            { packed ->
+            { packed: Long ->
                 val px = BlockPos.getX(packed)
                 val py = BlockPos.getY(packed)
                 val pz = BlockPos.getZ(packed)
