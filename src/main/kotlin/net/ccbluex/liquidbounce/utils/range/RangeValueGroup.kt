@@ -73,7 +73,7 @@ open class RangeValueGroup(
         PROGRESSIVE("Progressive")
     }
 
-    protected val reachMode by enumChoice("ReachMode", ReachMode.STATIC)
+    internal val reachMode by enumChoice("ReachMode", ReachMode.STATIC)
 
     /**
      * Increases the attack max-range.
@@ -81,7 +81,7 @@ open class RangeValueGroup(
      * When min-range is introduced, rename from "RangeIncrease" to "MaxRangeIncrease"
      * and add "RangeIncrease" as an alias.
      */
-    protected var maxRangeIncrease by float(
+    internal var maxRangeIncrease by float(
         "RangeIncrease",
         maxRangeIncrease,
         0.0f..5f,
@@ -92,7 +92,7 @@ open class RangeValueGroup(
      * This will use only this value for non-visible entities. Originally, we could never attack through walls,
      * so this makes sense to keep starting from 0.0.
      */
-    protected var throughWallsRange by float(
+    internal var throughWallsRange by float(
         "ThroughWallsRange",
         throughWallsRange,
         0f..8f,
@@ -101,14 +101,14 @@ open class RangeValueGroup(
         min(interactionRange, it)
     }
 
-    protected var comboHits by int(
+    internal var comboHits by int(
         "ComboHits",
         1,
         1..10,
         "hits"
     )
 
-    protected var maxExtendedHits by int(
+    internal var maxExtendedHits by int(
         "MaxExtendedHits",
         0,
         0..10,
@@ -119,14 +119,14 @@ open class RangeValueGroup(
      * How much range to add per extended hit beyond the combo threshold.
      * When 0, the full [maxRangeIncrease] is granted immediately upon unlocking.
      */
-    protected var rangePerHit by float(
+    internal var rangePerHit by float(
         "RangePerHit",
         0.0f,
         0.0f..5f,
         "blocks"
     )
 
-    protected var reachResetDelay by int(
+    internal var reachResetDelay by int(
         "ReachResetDelay",
         1000,
         0..2000,
@@ -138,136 +138,25 @@ open class RangeValueGroup(
      * can start building a new combo. Only applies when [maxExtendedHits] > 0.
      * When 0, no cooldown is applied and the next combo cycle starts immediately.
      */
-    protected var extendedReachCooldown by int(
+    internal var extendedReachCooldown by int(
         "ExtendedReachCooldown",
         0,
         0..5000,
         "ms"
     )
 
-    private val baseRange: Float
+    internal val baseRange: Float
         get() = mc.player?.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE)?.toFloat() ?: 3.0F
 
-    class ReachComboTracker {
-        var hits: Int = 0
-        val timer = Chronometer()
-        val cooldownTimer = Chronometer()
-    }
+    val logic = RangeLogic(this)
 
-    private val comboTrackers = it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ReachComboTracker>()
+    override fun children(): List<EventListener> = listOf(logic)
 
-    private fun getOrCreateTracker(entityId: Int): ReachComboTracker {
-        var tracker = comboTrackers.get(entityId)
-        if (tracker == null) {
-            tracker = ReachComboTracker()
-            comboTrackers.put(entityId, tracker)
-        }
-        return tracker
-    }
+    fun getInteractionRangeFor(entity: Entity?): Float = logic.getInteractionRangeFor(entity)
 
-    @Suppress("unused")
-    private val postAttackHandler = handler<PostAttackEntityEvent> { event ->
-        if (reachMode != ReachMode.PROGRESSIVE) return@handler
+    fun getThroughWallsRangeFor(entity: Entity?): Float = logic.getThroughWallsRangeFor(entity)
 
-        val tracker = getOrCreateTracker(event.entity.id)
-
-        // Don't count hits during cooldown
-        if (extendedReachCooldown > 0
-            && !tracker.cooldownTimer.hasElapsed(extendedReachCooldown.toLong())) {
-            return@handler
-        }
-
-        val allowedRange = if (player.hasLineOfSight(event.entity)) {
-            getInteractionRangeFor(event.entity)
-        } else {
-            getThroughWallsRangeFor(event.entity)
-        }
-
-        // Avoid sqrt: distance > allowedRange  ⟺  distanceSqr > allowedRange²
-        if (event.entity.squaredBoxedDistanceTo(player) > allowedRange * allowedRange) {
-            tracker.hits = 0
-            tracker.timer.reset(0L)
-            return@handler
-        }
-
-        if (tracker.hits > 0 && !tracker.timer.hasElapsed(reachResetDelay.toLong())) {
-            if (maxExtendedHits > 0 && (tracker.hits - comboHits) >= maxExtendedHits) {
-                if (extendedReachCooldown > 0) {
-                    tracker.hits = 0
-                    tracker.timer.reset(0L)
-                    tracker.cooldownTimer.reset()
-                    return@handler
-                } else {
-                    tracker.hits = 1
-                }
-            } else {
-                tracker.hits++
-            }
-        } else {
-            tracker.hits = 1
-        }
-        tracker.timer.reset()
-    }
-
-    /**
-     * Returns the progressive range increase for the given entity (0 to [maxRangeIncrease]).
-     *
-     * When [rangePerHit] is 0, the full [maxRangeIncrease] is granted once the combo threshold
-     * is met (instant unlock). When [rangePerHit] > 0, each extended hit adds [rangePerHit]
-     * blocks, capped at [maxRangeIncrease].
-     */
-    private fun getProgressiveIncrease(entity: Entity): Float {
-        val tracker = comboTrackers.get(entity.id) ?: return 0f
-
-        if (tracker.hits < comboHits) return 0f
-        if (tracker.timer.hasElapsed(reachResetDelay.toLong())) return 0f
-
-        val extendedHits = tracker.hits - comboHits
-        if (maxExtendedHits > 0 && extendedHits >= maxExtendedHits) return 0f
-
-        // Safety: should not happen since hits is 0 during cooldown, but guard anyway
-        if (extendedReachCooldown > 0
-            && !tracker.cooldownTimer.hasElapsed(extendedReachCooldown.toLong())) {
-            return 0f
-        }
-
-        if (rangePerHit <= 0f) return maxRangeIncrease // instant full reach
-
-        return min(maxRangeIncrease, rangePerHit * (extendedHits + 1))
-    }
-
-    fun getInteractionRangeFor(entity: Entity?): Float {
-        val base = baseRange
-        val defaultRange = base + maxRangeIncrease
-
-        if (reachMode != ReachMode.PROGRESSIVE || entity == null) {
-            return defaultRange
-        }
-
-        return base + getProgressiveIncrease(entity)
-    }
-
-    fun getThroughWallsRangeFor(entity: Entity?): Float {
-        if (reachMode != ReachMode.PROGRESSIVE || entity == null) {
-            return throughWallsRange
-        }
-
-        val cappedWallsRange = minOf(3.0f, throughWallsRange)
-        return if (getProgressiveIncrease(entity) > 0f) throughWallsRange else cappedWallsRange
-    }
-
-    open fun getScanRangeFor(entity: Entity?): Float {
-        val base = baseRange
-        val defaultRange = base + maxRangeIncrease
-        val cappedWallsRange = minOf(3.0f, throughWallsRange)
-
-        if (reachMode != ReachMode.PROGRESSIVE || entity == null) {
-            return maxOf(defaultRange, throughWallsRange)
-        }
-
-        return if (getProgressiveIncrease(entity) > 0f) maxOf(defaultRange, throughWallsRange)
-            else maxOf(base, cappedWallsRange)
-    }
+    open fun getScanRangeFor(entity: Entity?): Float = logic.getScanRangeFor(entity)
 
     /**
      * Decreases the attack min-range.
@@ -281,64 +170,24 @@ open class RangeValueGroup(
      */
     // private val minRangeDecrease by float("MinRangeDecrease", 0f, 0f..2f, "blocks")
 
-    fun adjustAttackRange(attackRange: AttackRange = AttackRange.defaultFor(player)): AttackRange {
-        val base = baseRange
-        val defaultRange = base + maxRangeIncrease
-        val baseInteractionRange = base + this@RangeValueGroup.maxRangeIncrease
-        val isDefaultReach = Math.abs(attackRange.maxReach - baseInteractionRange) < 0.01f
-        val targetReach = if (isDefaultReach) {
-            defaultRange
-        } else {
-            attackRange.maxReach + this@RangeValueGroup.maxRangeIncrease
-        }
-        val creativeOffset = attackRange.maxCreativeReach - attackRange.maxReach
-        return AttackRange(
-            max(0f, attackRange.minReach/* - minRangeDecrease*/),
-            targetReach,
-            max(0f, attackRange.minCreativeReach/* - minRangeDecrease*/),
-            targetReach + creativeOffset,
-            attackRange.hitboxMargin,
-            attackRange.mobFactor
-        )
-    }
+    fun adjustAttackRange(attackRange: AttackRange = AttackRange.defaultFor(player)): AttackRange =
+        logic.adjustAttackRange(attackRange)
 
     /**
      * Entity-aware variant that respects [ReachMode.PROGRESSIVE].
      * The increase applied is derived from [getInteractionRangeFor] rather than the
      * raw [maxRangeIncrease], so the progressive combo-tracker is honoured.
      */
-    fun adjustAttackRange(attackRange: AttackRange, entity: Entity): AttackRange {
-        val base = baseRange
-        val dynamicRange = getInteractionRangeFor(entity)
-        val increase = max(0f, dynamicRange - base)
-        val baseInteractionRange = base + this@RangeValueGroup.maxRangeIncrease
-        val isDefaultReach = Math.abs(attackRange.maxReach - baseInteractionRange) < 0.01f
-        val targetReach = if (isDefaultReach) {
-            dynamicRange
-        } else {
-            attackRange.maxReach + increase
-        }
-        val creativeOffset = attackRange.maxCreativeReach - attackRange.maxReach
-        return AttackRange(
-            max(0f, attackRange.minReach/* - minRangeDecrease*/),
-            targetReach,
-            max(0f, attackRange.minCreativeReach/* - minRangeDecrease*/),
-            targetReach + creativeOffset,
-            attackRange.hitboxMargin,
-            attackRange.mobFactor
-        )
-    }
+    fun adjustAttackRange(attackRange: AttackRange, entity: Entity): AttackRange =
+        logic.adjustAttackRange(attackRange, entity)
 
-    fun getAttackRange(itemStack: ItemStack = player.getItemInHand(InteractionHand.MAIN_HAND)) = adjustAttackRange(
-        itemStack.get(DataComponents.ATTACK_RANGE) ?: AttackRange.defaultFor(player)
-    )
+    fun getAttackRange(itemStack: ItemStack = player.getItemInHand(InteractionHand.MAIN_HAND)) =
+        logic.getAttackRange(itemStack)
 
     fun isInRange(itemStack: ItemStack = player.getItemInHand(InteractionHand.MAIN_HAND), pos: Vec3) =
-        getAttackRange(itemStack).isInRange(player, pos)
+        logic.isInRange(itemStack, pos)
 
-    fun isInRange(entity: Entity, pos: Vec3): Boolean {
-        val dynamicRange = getInteractionRangeFor(entity)
-        return player.distanceToSqr(pos) <= dynamicRange * dynamicRange
-    }
+    fun isInRange(entity: Entity, pos: Vec3): Boolean =
+        logic.isInRange(entity, pos)
 
 }
