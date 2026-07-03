@@ -24,6 +24,7 @@ import net.ccbluex.liquidbounce.event.events.PostAttackEntityEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.MinecraftShortcuts
 import net.ccbluex.liquidbounce.utils.client.Chronometer
+import net.ccbluex.liquidbounce.utils.entity.squaredBoxedDistanceTo
 import net.minecraft.core.component.DataComponents
 import net.minecraft.world.InteractionHand
 import net.minecraft.world.entity.Entity
@@ -53,17 +54,14 @@ open class RangeValueGroup(
      * Returns the range to use for vanilla entity detection (i.e. what gets returned by
      * [net.minecraft.world.entity.player.Player.entityInteractionRange]).
      *
-     * In [ReachMode.PROGRESSIVE] mode we must NOT extend entity detection range upfront,
-     * because the actual hit check in startAttack already gates the extra reach behind
-     * the combo/delay requirements via [getInteractionRangeFor]. Returning the full
-     * increased range here would allow the player to target – and therefore hit – an
-     * opponent from the extended range before the progressive requirements are met.
-     *
-     * In [ReachMode.STATIC] mode the full increased range is always available, so we
-     * return [interactionRange] as before.
+     * We return [interactionRange] globally even in [ReachMode.PROGRESSIVE].
+     * The actual hit check in startAttack uses adjustAttackRange, which gates the
+     * extra reach behind the combo/delay requirements via [getInteractionRangeFor].
+     * If we didn't extend the picking range upfront, the vanilla raytracer would cap
+     * at baseRange, and we could never hit the entity even if we had the combo.
      */
     val effectiveInteractionRange: Float
-        get() = if (reachMode == ReachMode.PROGRESSIVE) baseRange else interactionRange
+        get() = interactionRange
 
     val interactionThroughWallsRange
         get() = throughWallsRange
@@ -143,7 +141,7 @@ open class RangeValueGroup(
         val defaultRange = base + maxRangeIncrease
 
         // Avoid sqrt: distance > defaultRange  ⟺  distanceSqr > defaultRange²
-        if (player.distanceToSqr(event.entity) > defaultRange * defaultRange) {
+        if (event.entity.squaredBoxedDistanceTo(player) > defaultRange * defaultRange) {
             tracker.hits = 0
             tracker.timer.reset(0L)
             return@handler
