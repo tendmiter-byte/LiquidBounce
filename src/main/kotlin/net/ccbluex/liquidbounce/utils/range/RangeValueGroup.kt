@@ -213,6 +213,25 @@ open class RangeValueGroup(
             attackRange.mobFactor
         )
 
+    /**
+     * Entity-aware variant that respects [ReachMode.PROGRESSIVE].
+     * The increase applied is derived from [getInteractionRangeFor] rather than the
+     * raw [maxRangeIncrease], so the progressive combo-tracker is honoured.
+     */
+    fun adjustAttackRange(attackRange: AttackRange, entity: Entity): AttackRange {
+        val base = baseRange
+        val dynamicRange = getInteractionRangeFor(entity)
+        val increase = max(0f, dynamicRange - base)
+        return AttackRange(
+            max(0f, attackRange.minReach/* - minRangeDecrease*/),
+            attackRange.maxReach + increase,
+            max(0f, attackRange.minCreativeReach/* - minRangeDecrease*/),
+            attackRange.maxCreativeReach + increase,
+            attackRange.hitboxMargin,
+            attackRange.mobFactor
+        )
+    }
+
     fun getAttackRange(itemStack: ItemStack = player.getItemInHand(InteractionHand.MAIN_HAND)) = adjustAttackRange(
         itemStack.get(DataComponents.ATTACK_RANGE) ?: AttackRange.defaultFor(player)
     )
