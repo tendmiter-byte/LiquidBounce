@@ -108,10 +108,40 @@ open class RangeValueGroup(
         "hits"
     )
 
+    protected var maxExtendedHits by int(
+        "MaxExtendedHits",
+        0,
+        0..10,
+        "hits"
+    )
+
+    /**
+     * How much range to add per extended hit beyond the combo threshold.
+     * When 0, the full [maxRangeIncrease] is granted immediately upon unlocking.
+     */
+    protected var rangePerHit by float(
+        "RangePerHit",
+        0.0f,
+        0.0f..5f,
+        "blocks"
+    )
+
     protected var reachResetDelay by int(
         "ReachResetDelay",
         1000,
         0..2000,
+        "ms"
+    )
+
+    /**
+     * Cooldown in milliseconds after [maxExtendedHits] is exhausted before the player
+     * can start building a new combo. Only applies when [maxExtendedHits] > 0.
+     * When 0, no cooldown is applied and the next combo cycle starts immediately.
+     */
+    protected var extendedReachCooldown by int(
+        "ExtendedReachCooldown",
+        0,
+        0..5000,
         "ms"
     )
 
@@ -121,6 +151,7 @@ open class RangeValueGroup(
     class ReachComboTracker {
         var hits: Int = 0
         val timer = Chronometer()
+        val cooldownTimer = Chronometer()
     }
 
     private val comboTrackers = it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ReachComboTracker>()
@@ -139,22 +170,70 @@ open class RangeValueGroup(
         if (reachMode != ReachMode.PROGRESSIVE) return@handler
 
         val tracker = getOrCreateTracker(event.entity.id)
-        val base = baseRange
-        val defaultRange = base + maxRangeIncrease
 
-        // Avoid sqrt: distance > defaultRange  ⟺  distanceSqr > defaultRange²
-        if (event.entity.squaredBoxedDistanceTo(player) > defaultRange * defaultRange) {
+        // Don't count hits during cooldown
+        if (extendedReachCooldown > 0
+            && !tracker.cooldownTimer.hasElapsed(extendedReachCooldown.toLong())) {
+            return@handler
+        }
+
+        val allowedRange = if (player.hasLineOfSight(event.entity)) {
+            getInteractionRangeFor(event.entity)
+        } else {
+            getThroughWallsRangeFor(event.entity)
+        }
+
+        // Avoid sqrt: distance > allowedRange  ⟺  distanceSqr > allowedRange²
+        if (event.entity.squaredBoxedDistanceTo(player) > allowedRange * allowedRange) {
             tracker.hits = 0
             tracker.timer.reset(0L)
             return@handler
         }
 
         if (tracker.hits > 0 && !tracker.timer.hasElapsed(reachResetDelay.toLong())) {
-            tracker.hits++
+            if (maxExtendedHits > 0 && (tracker.hits - comboHits) >= maxExtendedHits) {
+                if (extendedReachCooldown > 0) {
+                    tracker.hits = 0
+                    tracker.timer.reset(0L)
+                    tracker.cooldownTimer.reset()
+                    return@handler
+                } else {
+                    tracker.hits = 1
+                }
+            } else {
+                tracker.hits++
+            }
         } else {
             tracker.hits = 1
         }
         tracker.timer.reset()
+    }
+
+    /**
+     * Returns the progressive range increase for the given entity (0 to [maxRangeIncrease]).
+     *
+     * When [rangePerHit] is 0, the full [maxRangeIncrease] is granted once the combo threshold
+     * is met (instant unlock). When [rangePerHit] > 0, each extended hit adds [rangePerHit]
+     * blocks, capped at [maxRangeIncrease].
+     */
+    private fun getProgressiveIncrease(entity: Entity): Float {
+        val tracker = comboTrackers.get(entity.id) ?: return 0f
+
+        if (tracker.hits < comboHits) return 0f
+        if (tracker.timer.hasElapsed(reachResetDelay.toLong())) return 0f
+
+        val extendedHits = tracker.hits - comboHits
+        if (maxExtendedHits > 0 && extendedHits >= maxExtendedHits) return 0f
+
+        // Safety: should not happen since hits is 0 during cooldown, but guard anyway
+        if (extendedReachCooldown > 0
+            && !tracker.cooldownTimer.hasElapsed(extendedReachCooldown.toLong())) {
+            return 0f
+        }
+
+        if (rangePerHit <= 0f) return maxRangeIncrease // instant full reach
+
+        return min(maxRangeIncrease, rangePerHit * (extendedHits + 1))
     }
 
     fun getInteractionRangeFor(entity: Entity?): Float {
@@ -165,13 +244,7 @@ open class RangeValueGroup(
             return defaultRange
         }
 
-        val tracker = comboTrackers.get(entity.id) ?: return base
-
-        if (tracker.hits > 0 && tracker.timer.hasElapsed(reachResetDelay.toLong())) {
-            return base
-        }
-
-        return if (tracker.hits >= comboHits) defaultRange else base
+        return base + getProgressiveIncrease(entity)
     }
 
     fun getThroughWallsRangeFor(entity: Entity?): Float {
@@ -180,13 +253,7 @@ open class RangeValueGroup(
         }
 
         val cappedWallsRange = minOf(3.0f, throughWallsRange)
-        val tracker = comboTrackers.get(entity.id) ?: return cappedWallsRange
-
-        if (tracker.hits > 0 && tracker.timer.hasElapsed(reachResetDelay.toLong())) {
-            return cappedWallsRange
-        }
-
-        return if (tracker.hits >= comboHits) throughWallsRange else cappedWallsRange
+        return if (getProgressiveIncrease(entity) > 0f) throughWallsRange else cappedWallsRange
     }
 
     open fun getScanRangeFor(entity: Entity?): Float {
@@ -198,13 +265,8 @@ open class RangeValueGroup(
             return maxOf(defaultRange, throughWallsRange)
         }
 
-        // Single tracker lookup instead of two (one per getInteractionRangeFor/getThroughWallsRangeFor)
-        val tracker = comboTrackers.get(entity.id)
-        val unlocked = tracker != null
-            && tracker.hits >= comboHits
-            && !tracker.timer.hasElapsed(reachResetDelay.toLong())
-
-        return if (unlocked) maxOf(defaultRange, throughWallsRange) else maxOf(base, cappedWallsRange)
+        return if (getProgressiveIncrease(entity) > 0f) maxOf(defaultRange, throughWallsRange)
+            else maxOf(base, cappedWallsRange)
     }
 
     /**
