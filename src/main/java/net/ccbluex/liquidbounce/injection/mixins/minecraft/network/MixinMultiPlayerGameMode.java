@@ -52,6 +52,11 @@ public abstract class MixinMultiPlayerGameMode {
         }
     }
 
+    @Inject(method = "attack", at = @At("RETURN"))
+    private void hookPostAttack(Player player, Entity target, CallbackInfo callbackInfo) {
+        EventManager.INSTANCE.callEvent(new PostAttackEntityEvent(target));
+    }
+
     /**
      * Hook into updateBlockBreakingProgress method at HEAD and call BlockBreakingProgress event.
      */

@@ -76,6 +76,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.component.AttackRange;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
@@ -361,7 +362,15 @@ public abstract class MixinMinecraft {
     )
     private AttackRange injectReachAttackRange(AttackRange instance, LivingEntity entity, Vec3 pos) {
         if (ModuleReach.INSTANCE.getRunning()) {
-            return ModuleReach.INSTANCE.getEntity().adjustAttackRange(instance, entity);
+            Entity target = null;
+            if (this.hitResult instanceof EntityHitResult entityHitResult) {
+                target = entityHitResult.getEntity();
+            }
+            if (target != null) {
+                return ModuleReach.INSTANCE.getEntity().adjustAttackRange(instance, target);
+            } else {
+                return ModuleReach.INSTANCE.getEntity().adjustAttackRange(instance);
+            }
         }
 
         return instance;

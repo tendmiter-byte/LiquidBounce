@@ -45,11 +45,13 @@ import net.minecraft.client.gui.Hud;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.AttackRange;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Final;
@@ -270,7 +272,15 @@ public abstract class MixinHud {
     )
     private AttackRange injectReachAttackRange(AttackRange instance, LivingEntity entity, Vec3 pos) {
         if (ModuleReach.INSTANCE.getRunning()) {
-            return ModuleReach.INSTANCE.getEntity().adjustAttackRange(instance, entity);
+            Entity target = null;
+            if (this.minecraft.hitResult instanceof EntityHitResult entityHitResult) {
+                target = entityHitResult.getEntity();
+            }
+            if (target != null) {
+                return ModuleReach.INSTANCE.getEntity().adjustAttackRange(instance, target);
+            } else {
+                return ModuleReach.INSTANCE.getEntity().adjustAttackRange(instance);
+            }
         }
 
         return instance;

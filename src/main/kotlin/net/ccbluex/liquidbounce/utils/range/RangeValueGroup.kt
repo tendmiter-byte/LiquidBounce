@@ -44,6 +44,8 @@ open class RangeValueGroup(
     throughWallsRange: Float
 ) : ValueGroup(name), MinecraftShortcuts, EventListener {
 
+    override fun parent(): EventListener? = base as? EventListener
+
     /**
      * @see net.minecraft.world.entity.player.Player.entityInteractionRange
      */
@@ -217,15 +219,26 @@ open class RangeValueGroup(
      */
     // private val minRangeDecrease by float("MinRangeDecrease", 0f, 0f..2f, "blocks")
 
-    fun adjustAttackRange(attackRange: AttackRange = AttackRange.defaultFor(player)) =
-        AttackRange(
+    fun adjustAttackRange(attackRange: AttackRange = AttackRange.defaultFor(player)): AttackRange {
+        val base = baseRange
+        val defaultRange = base + maxRangeIncrease
+        val baseInteractionRange = base + this@RangeValueGroup.maxRangeIncrease
+        val isDefaultReach = Math.abs(attackRange.maxReach - baseInteractionRange) < 0.01f
+        val targetReach = if (isDefaultReach) {
+            defaultRange
+        } else {
+            attackRange.maxReach + this@RangeValueGroup.maxRangeIncrease
+        }
+        val creativeOffset = attackRange.maxCreativeReach - attackRange.maxReach
+        return AttackRange(
             max(0f, attackRange.minReach/* - minRangeDecrease*/),
-            attackRange.maxReach + this@RangeValueGroup.maxRangeIncrease,
+            targetReach,
             max(0f, attackRange.minCreativeReach/* - minRangeDecrease*/),
-            attackRange.maxCreativeReach + this@RangeValueGroup.maxRangeIncrease,
+            targetReach + creativeOffset,
             attackRange.hitboxMargin,
             attackRange.mobFactor
         )
+    }
 
     /**
      * Entity-aware variant that respects [ReachMode.PROGRESSIVE].
@@ -236,11 +249,19 @@ open class RangeValueGroup(
         val base = baseRange
         val dynamicRange = getInteractionRangeFor(entity)
         val increase = max(0f, dynamicRange - base)
+        val baseInteractionRange = base + this@RangeValueGroup.maxRangeIncrease
+        val isDefaultReach = Math.abs(attackRange.maxReach - baseInteractionRange) < 0.01f
+        val targetReach = if (isDefaultReach) {
+            dynamicRange
+        } else {
+            attackRange.maxReach + increase
+        }
+        val creativeOffset = attackRange.maxCreativeReach - attackRange.maxReach
         return AttackRange(
             max(0f, attackRange.minReach/* - minRangeDecrease*/),
-            attackRange.maxReach + increase,
+            targetReach,
             max(0f, attackRange.minCreativeReach/* - minRangeDecrease*/),
-            attackRange.maxCreativeReach + increase,
+            targetReach + creativeOffset,
             attackRange.hitboxMargin,
             attackRange.mobFactor
         )
