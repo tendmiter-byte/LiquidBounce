@@ -11,11 +11,17 @@
         globalSettings = await getGlobalSettings();
     }
 
+    let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+
     async function updateGlobalSettings() {
         if (!globalSettings) return;
 
         await setGlobalSettings($state.snapshot(globalSettings));
-        await fetchGlobalSettings();
+        if (refetchTimer !== null) clearTimeout(refetchTimer);
+        refetchTimer = setTimeout(async () => {
+            refetchTimer = null;
+            await fetchGlobalSettings();
+        }, 150);
     }
 
     onMount(() => {

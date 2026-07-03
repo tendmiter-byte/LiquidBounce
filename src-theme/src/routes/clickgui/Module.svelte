@@ -59,10 +59,19 @@
         }
     }
 
+    let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+
     async function updateModuleSettings() {
         try {
             await setModuleSettings(name, configurable);
-            await fetchModuleSettings();
+            // Debounce the refetch so rapid slider changes (e.g. holding an arrow key)
+            // don't fire a GET that races back and overwrites the current local value
+            // with a stale one, causing the slider to snap back.
+            if (refetchTimer !== null) clearTimeout(refetchTimer);
+            refetchTimer = setTimeout(async () => {
+                refetchTimer = null;
+                await fetchModuleSettings();
+            }, 150);
         } catch (err) {
             console.error("Failed to update module settings", err);
         }
