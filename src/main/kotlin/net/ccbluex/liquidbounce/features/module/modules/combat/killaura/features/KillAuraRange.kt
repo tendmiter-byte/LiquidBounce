@@ -26,6 +26,7 @@ import net.ccbluex.liquidbounce.config.types.ValueType
 import net.ccbluex.liquidbounce.features.module.MinecraftShortcuts
 import net.ccbluex.liquidbounce.utils.kotlin.random
 import net.ccbluex.liquidbounce.utils.range.RangeValueGroup
+import net.minecraft.world.entity.Entity
 import kotlin.math.max
 
 /**
@@ -35,6 +36,11 @@ object KillAuraRange : RangeValueGroup("Range", 1f, 3f), MinecraftShortcuts {
 
     internal val scanRange
         get() = maxOf(interactionRange, interactionThroughWallsRange) + currentScanRangeAddition
+
+    override fun getScanRangeFor(entity: Entity?): Float {
+        val range = getInteractionRangeFor(entity)
+        return maxOf(range, interactionThroughWallsRange) + currentScanRangeAddition
+    }
 
     private var scanRangeIncrease by floatRange(
         "ScanRangeIncrease",

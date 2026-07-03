@@ -19,9 +19,15 @@
 package net.ccbluex.liquidbounce.utils.range
 
 import net.ccbluex.liquidbounce.config.types.group.ValueGroup
+import net.ccbluex.liquidbounce.event.EventListener
+import net.ccbluex.liquidbounce.event.events.PostAttackEntityEvent
+import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.MinecraftShortcuts
+import net.ccbluex.liquidbounce.utils.client.Chronometer
+import net.ccbluex.liquidbounce.utils.kotlin.random
 import net.minecraft.core.component.DataComponents
 import net.minecraft.world.InteractionHand
+import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.ai.attributes.Attributes
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.item.component.AttackRange
@@ -36,7 +42,7 @@ open class RangeValueGroup(
     name: String,
     maxRangeIncrease: Float,
     throughWallsRange: Float
-) : ValueGroup(name), MinecraftShortcuts {
+) : ValueGroup(name), MinecraftShortcuts, EventListener {
 
     /**
      * @see net.minecraft.world.entity.player.Player.entityInteractionRange
@@ -47,6 +53,13 @@ open class RangeValueGroup(
 
     val interactionThroughWallsRange
         get() = throughWallsRange
+
+    enum class ReachMode(override val tag: String) : net.ccbluex.liquidbounce.config.types.list.Tagged {
+        NORMAL("Normal"),
+        COMBO("Combo")
+    }
+
+    protected val reachMode by enumChoice("ReachMode", ReachMode.NORMAL)
 
     /**
      * Increases the attack max-range.
@@ -60,6 +73,125 @@ open class RangeValueGroup(
         0.0f..5f,
         "blocks"
     )
+
+    protected var comboHits by float(
+        "ComboHits",
+        1f,
+        1f..10f,
+        "hits"
+    )
+
+    protected var reachResetDelay by float(
+        "ReachResetDelay",
+        1000f,
+        0f..2000f,
+        "ms"
+    )
+
+    protected var maxGainedReach by float(
+        "MaxGainedReach",
+        1.5f,
+        1f..5f,
+        "blocks"
+    )
+
+    class ReachComboTracker {
+        var hits: Int = 0
+        val timer = Chronometer()
+    }
+
+    val comboTrackers = it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<ReachComboTracker>()
+
+    @Suppress("unused")
+    private val postAttackHandler = handler<PostAttackEntityEvent> { event ->
+        if (reachMode != ReachMode.COMBO) return@handler
+        val entityId = event.entity.id
+        var tracker = comboTrackers.get(entityId)
+        if (tracker == null) {
+            tracker = ReachComboTracker()
+            comboTrackers.put(entityId, tracker)
+        }
+
+        val baseRange = (mc.player?.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE)?.toFloat() ?: 3.0F)
+        val distance = player.distanceTo(event.entity)
+        val gainedReach = distance - baseRange
+
+        if (gainedReach > maxGainedReach) {
+            tracker.hits = 0
+            tracker.timer.reset(0L)
+            return@handler
+        }
+
+        if (tracker.hits > 0 && !tracker.timer.hasElapsed(reachResetDelay.toLong())) {
+            tracker.hits = (tracker.hits + 1).coerceAtMost(100)
+        } else {
+            tracker.hits = 1
+        }
+        tracker.timer.reset()
+    }
+
+    fun getInteractionRangeFor(entity: Entity?): Float {
+        val baseRange = (mc.player?.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE)?.toFloat() ?: 3.0F)
+        val defaultRange = baseRange + maxRangeIncrease
+
+        if (reachMode != ReachMode.COMBO || entity == null) {
+            return defaultRange
+        }
+
+        val distance = player.distanceTo(entity)
+        val gainedReach = distance - baseRange
+
+        if (gainedReach > maxGainedReach) {
+            val tracker = comboTrackers.get(entity.id)
+            if (tracker != null) {
+                tracker.hits = 0
+                tracker.timer.reset(0L)
+            }
+            return baseRange
+        }
+
+        var tracker = comboTrackers.get(entity.id)
+        if (tracker == null) {
+            tracker = ReachComboTracker()
+            comboTrackers.put(entity.id, tracker)
+        }
+
+        if (tracker.hits > 0 && tracker.timer.hasElapsed(reachResetDelay.toLong())) {
+            tracker.hits = 0
+            return baseRange
+        }
+
+        if (tracker.hits >= comboHits) {
+            return defaultRange
+        }
+
+        return baseRange
+    }
+
+    fun getThroughWallsRangeFor(entity: Entity?): Float {
+        if (reachMode != ReachMode.COMBO || entity == null) {
+            return throughWallsRange
+        }
+
+        val tracker = comboTrackers.get(entity.id) ?: return minOf(3.0f, throughWallsRange)
+
+        if (tracker.hits > 0 && tracker.timer.hasElapsed(reachResetDelay.toLong())) {
+            tracker.hits = 0
+            return minOf(3.0f, throughWallsRange)
+        }
+
+        if (tracker.hits >= comboHits) {
+            return throughWallsRange
+        }
+
+        return minOf(3.0f, throughWallsRange)
+    }
+
+    open fun getScanRangeFor(entity: Entity?): Float {
+        val range = getInteractionRangeFor(entity)
+        val wallsRange = getThroughWallsRangeFor(entity)
+        return maxOf(range, wallsRange)
+    }
 
     /**
      * Decreases the attack min-range.
@@ -102,5 +234,10 @@ open class RangeValueGroup(
 
     fun isInRange(itemStack: ItemStack = player.getItemInHand(InteractionHand.MAIN_HAND), pos: Vec3) =
         getAttackRange(itemStack).isInRange(player, pos)
+
+    fun isInRange(entity: Entity, pos: Vec3): Boolean {
+        val dynamicRange = getInteractionRangeFor(entity)
+        return player.distanceToSqr(pos) <= dynamicRange * dynamicRange
+    }
 
 }

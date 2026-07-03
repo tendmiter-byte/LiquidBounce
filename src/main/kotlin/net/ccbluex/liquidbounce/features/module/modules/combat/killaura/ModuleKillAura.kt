@@ -213,14 +213,14 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         }
 
         val rotation = (if (rotations.rotationTiming == ON_TICK) {
-            findRotation(target, range.interactionRange, range.interactionThroughWallsRange)?.rotation
+            findRotation(target, range.getInteractionRangeFor(target), range.getThroughWallsRangeFor(target))?.rotation
         } else {
             null
         } ?: RotationManager.currentRotation ?: player.rotation).normalize()
 
         val crosshairTarget = when {
             raycast != TRACE_NONE -> {
-                findEntityInCrosshair(range.interactionRange.toDouble(), rotation, predicate = {
+                findEntityInCrosshair(range.getInteractionRangeFor(target).toDouble(), rotation, predicate = {
                     when (raycast) {
                         TRACE_ONLYENEMY -> it.shouldBeAttacked()
                         TRACE_ALL -> true
@@ -261,20 +261,20 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         val attackHitResult = isLookingAtEntity(
             toEntity = target,
             rotation = rotation,
-            range = range.interactionRange.toDouble(),
-            throughWallsRange = range.interactionThroughWallsRange.toDouble()
+            range = range.getInteractionRangeFor(target).toDouble(),
+            throughWallsRange = range.getThroughWallsRangeFor(target).toDouble()
         )
 
         debugParameter("Target Hit Result") { attackHitResult?.location }
 
         val isInRange = ModuleElytraTarget.canIgnoreKillAuraRotations ||
-            attackHitResult != null && range.isInRange(pos = attackHitResult.location)
+            attackHitResult != null && range.isInRange(target, pos = attackHitResult.location)
         debugParameter("Is In Range") { isInRange }
 
         // Check if our target is in range, otherwise deal with auto block
         if (!isInRange) {
             if (KillAuraAutoBlock.enabled && KillAuraAutoBlock.onScanRange &&
-                player.squaredBoxedDistanceTo(target) <= range.scanRange.sq()) {
+                player.squaredBoxedDistanceTo(target) <= range.getScanRangeFor(target).sq()) {
                 if (KillAuraClicker.ticksSinceLastClick >= KillAuraAutoBlock.reblockTicks) {
                     KillAuraAutoBlock.startBlocking()
                 }
@@ -325,23 +325,32 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
     }
 
     private fun updateTarget() {
-        // Calculate maximum range based on enemy distance
-        val maximumRange = if (targetTracker.closestSquaredEnemyDistance > range.interactionRange.sq()) {
-            range.scanRange
-        } else {
-            range.interactionRange
-        }
-
-        debugParameter("Maximum Range") { maximumRange }
-        debugParameter("Range") { range }
-        val squaredMaxRange = maximumRange.sq()
-        val squaredNormalRange = range.interactionRange.sq()
-
         // Find a suitable target
         val target = targetTracker.targets()
-            .filter { entity -> entity.squaredBoxedDistanceTo(player) <= squaredMaxRange }
-            .sortedBy { entity -> if (entity.squaredBoxedDistanceTo(player) <= squaredNormalRange) 0 else 1 }
-            .firstOrNull { entity -> processTarget(entity, maximumRange, range.interactionThroughWallsRange) }
+            .filter { entity ->
+                val entityRange = range.getInteractionRangeFor(entity)
+                val scanRange = range.getScanRangeFor(entity)
+                val maximumRange = if (targetTracker.closestSquaredEnemyDistance > entityRange.sq()) {
+                    scanRange
+                } else {
+                    entityRange
+                }
+                entity.squaredBoxedDistanceTo(player) <= maximumRange.sq()
+            }
+            .sortedBy { entity ->
+                val entityRange = range.getInteractionRangeFor(entity)
+                if (entity.squaredBoxedDistanceTo(player) <= entityRange.sq()) 0 else 1
+            }
+            .firstOrNull { entity ->
+                val entityRange = range.getInteractionRangeFor(entity)
+                val scanRange = range.getScanRangeFor(entity)
+                val maximumRange = if (targetTracker.closestSquaredEnemyDistance > entityRange.sq()) {
+                    scanRange
+                } else {
+                    entityRange
+                }
+                processTarget(entity, maximumRange, range.getThroughWallsRangeFor(entity))
+            }
 
         if (target != null) {
             targetTracker.target = target
