@@ -49,6 +49,22 @@ open class RangeValueGroup(
     val interactionRange: Float
         get() = baseRange + maxRangeIncrease
 
+    /**
+     * Returns the range to use for vanilla entity detection (i.e. what gets returned by
+     * [net.minecraft.world.entity.player.Player.entityInteractionRange]).
+     *
+     * In [ReachMode.PROGRESSIVE] mode we must NOT extend entity detection range upfront,
+     * because the actual hit check in startAttack already gates the extra reach behind
+     * the combo/delay requirements via [getInteractionRangeFor]. Returning the full
+     * increased range here would allow the player to target – and therefore hit – an
+     * opponent from the extended range before the progressive requirements are met.
+     *
+     * In [ReachMode.STATIC] mode the full increased range is always available, so we
+     * return [interactionRange] as before.
+     */
+    val effectiveInteractionRange: Float
+        get() = if (reachMode == ReachMode.PROGRESSIVE) baseRange else interactionRange
+
     val interactionThroughWallsRange
         get() = throughWallsRange
 
