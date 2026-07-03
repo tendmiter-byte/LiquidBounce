@@ -223,6 +223,8 @@ export interface PlayerData {
     actualHealth: number;
     maxHealth: number;
     absorption: number;
+    vehicleHealth: number;
+    vehicleMaxHealth: number;
     yaw: number;
     pitch: number;
     armor: number;

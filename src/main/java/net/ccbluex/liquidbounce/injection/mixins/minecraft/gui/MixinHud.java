@@ -158,6 +158,14 @@ public abstract class MixinHud {
         }
     }
 
+    @Inject(method = "extractVehicleHealth", at = @At("HEAD"), cancellable = true)
+    private void hookRenderVehicleHealth(CallbackInfo ci) {
+        if (HudComponentManager.isTweakEnabled(HudComponentTweak.TWEAK_HOTBAR)
+                || HudComponentManager.isTweakEnabled(HudComponentTweak.DISABLE_STATUS_BAR)) {
+            ci.cancel();
+        }
+    }
+
     @ModifyReturnValue(method = "nextContextualInfoState", at = @At("RETURN"))
     private Hud.ContextualInfo tweakExpBar(Hud.ContextualInfo original) {
         if (HudComponentManager.isTweakEnabled(HudComponentTweak.DISABLE_EXP_BAR) && original == Hud.ContextualInfo.EXPERIENCE) {

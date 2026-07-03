@@ -104,16 +104,30 @@
             </div>
 
             {#if playerData.gameMode !== "creative"}
-                {#if playerData.absorption > 0}
+                {#if playerData.absorption > 0 || playerData.vehicleMaxHealth > 0}
                     <div class="pair">
-                        <Status
-                                max={maxAbsorption}
-                                value={playerData.absorption}
-                                color="var(--hotbar-absorption-color)"
-                                alignRight={false}
-                        />
+                        {#if playerData.absorption > 0}
+                            <Status
+                                    max={maxAbsorption}
+                                    value={playerData.absorption}
+                                    color="var(--hotbar-absorption-color)"
+                                    alignRight={false}
+                            />
+                        {:else}
+                            <div></div>
+                        {/if}
 
-                        <div></div>
+                        {#if playerData.vehicleMaxHealth > 0}
+                            <Status
+                                    max={playerData.vehicleMaxHealth}
+                                    value={playerData.vehicleHealth}
+                                    color="#ff9800"
+                                    alignRight={true}
+                                    icon="heart"
+                            />
+                        {:else}
+                            <div></div>
+                        {/if}
                     </div>
                 {/if}
                 <div class="pair">
