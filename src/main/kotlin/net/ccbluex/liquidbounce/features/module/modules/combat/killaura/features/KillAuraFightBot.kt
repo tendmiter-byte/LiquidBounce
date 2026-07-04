@@ -101,6 +101,13 @@ private data class CachedCombatPath(
     var stagnantTicks: Int = 0,
 )
 
+private data class FailedCombatRoute(
+    val targetId: Int,
+    val targetBlock: BlockPos,
+    val playerBlock: BlockPos,
+    val createdTick: Int,
+)
+
 private class FightBotDiagnosticsTrace(
     val startedNs: Long = System.nanoTime(),
 ) {
@@ -124,16 +131,68 @@ private class FightBotDiagnosticsTrace(
     var selectedMode = "none"
     var selectedCost = 0.0
     var selectedPathNodes = 0
+    var selectedClimbablePathNodes = 0
+    var noRouteCacheTicks = 0
     var stuck = false
+    var activeWaypointClimbable = false
     var selectedGoalBlock: BlockPos? = null
     var activeWaypoint: Vec3? = null
     val acceptedCandidateBlocks = mutableListOf<BlockPos>()
+    val climbablePathNodeBlocks = mutableListOf<Vec3i>()
+}
+
+internal fun shouldJumpForFightBotWaypoint(
+    waypointY: Double,
+    playerY: Double,
+    onClimbable: Boolean,
+    isClimbableWaypoint: Boolean,
+): Boolean {
+    if (!isClimbableWaypoint || waypointY <= playerY + CLIMB_ASCEND_EPSILON) {
+        return false
+    }
+
+    return onClimbable
+}
+
+internal fun climbDirectionalInputForFightBotWaypoint(
+    waypointY: Double,
+    playerY: Double,
+    onClimbable: Boolean,
+    isClimbableWaypoint: Boolean,
+): DirectionalInput? {
+    if (!isClimbableWaypoint ||
+        waypointY <= playerY + CLIMB_ASCEND_EPSILON ||
+        !onClimbable
+    ) {
+        return null
+    }
+
+    return DirectionalInput.NONE
+}
+
+internal fun containsClimbableWaypoint(
+    nodes: List<Vec3i>,
+    fromIndex: Int,
+    toIndex: Int,
+    isClimbable: (Vec3i) -> Boolean,
+): Boolean {
+    val start = fromIndex.coerceAtLeast(0)
+    val end = toIndex.coerceAtMost(nodes.lastIndex)
+
+    if (start > end) {
+        return false
+    }
+
+    return (start..end).any { index -> isClimbable(nodes[index]) }
 }
 
 private const val PATH_CACHE_TICKS = 40
+private const val FAILED_ROUTE_CACHE_TICKS = 10
 private const val PATH_MAX_COST = 40
 private const val MAX_PATHED_ATTACK_CANDIDATES = 8
 private const val WAYPOINT_REACHED_DISTANCE_SQ = 0.55 * 0.55
+private const val CLIMB_ASCEND_EPSILON = 0.1
+private const val CLIMB_CLEAR_EPSILON = 0.1
 private const val STUCK_TICKS = 8
 private const val STUCK_PROGRESS_EPSILON_SQ = 0.04
 private const val BAD_GOAL_TICKS = 25
@@ -149,6 +208,7 @@ private const val MAX_LOGGED_CANDIDATES = 32
 object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura, "FightBot", false), AStarPathBuilder {
 
     override val allowDiagonal: Boolean get() = true
+    override val allowClimbableNavigation: Boolean get() = true
     override val maxIterations: Int get() = 500
     override val stopRange: Double get() = 0.75
 
@@ -159,7 +219,10 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
     private val directRange by float("DirectRange", 4f, 1f..10f)
 
     private var cachedCombatPath: CachedCombatPath? = null
+    private var failedCombatRoute: FailedCombatRoute? = null
     private var activeWaypoint: Vec3? = null
+    private var activeWaypointBlock: Vec3i? = null
+    private var activeWaypointClimbable = false
     private var penalizedGoal: BlockPos? = null
     private var penalizedGoalUntilTick = 0
     private var activeDiagnostics: FightBotDiagnosticsTrace? = null
@@ -261,6 +324,8 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
     private fun calculateGoalPositionInternal(context: CombatContext): Vec3? {
         activeWaypoint = null
+        activeWaypointBlock = null
+        activeWaypointClimbable = false
 
         if (LeaderFollower.running && LeaderFollower.username.isNotEmpty()) {
             clearCombatPath()
@@ -290,6 +355,13 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
      * @param event Movement input event to modify
      */
     override fun calculateDirectionalInput(currentInput: DirectionalInput, goal: Vec3): DirectionalInput {
+        climbDirectionalInputForFightBotWaypoint(
+            waypointY = goal.y,
+            playerY = player.y,
+            onClimbable = player.onClimbable(),
+            isClimbableWaypoint = activeWaypointClimbable,
+        )?.let { return it }
+
         val degrees = getDegreesRelativeToView(goal.subtract(player.position()), player.yRot)
         return getDirectionalInputForDegrees(DirectionalInput.NONE, degrees, deadAngle = 20.0F)
     }
@@ -298,12 +370,19 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         super.handleMovementAssist(event, context, goal)
 
         val waypoint = activeWaypoint ?: goal
-        val needsStepUp = waypoint.y > player.y + 0.45 && player.onGround()
-        val blockedWhileMoving = player.horizontalCollision &&
+        val needsStepUp = !activeWaypointClimbable && waypoint.y > player.y + 0.45 && player.onGround()
+        val needsClimb = shouldJumpForFightBotWaypoint(
+            waypointY = waypoint.y,
+            playerY = player.y,
+            onClimbable = player.onClimbable(),
+            isClimbableWaypoint = activeWaypointClimbable,
+        )
+        val blockedWhileMoving = !activeWaypointClimbable &&
+            player.horizontalCollision &&
             player.onGround() &&
             player.position().distanceToSqr(waypoint) > WAYPOINT_REACHED_DISTANCE_SQ
 
-        if (needsStepUp || blockedWhileMoving) {
+        if (needsStepUp || needsClimb || blockedWhileMoving) {
             event.jump = true
         }
     }
@@ -378,9 +457,13 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         )
     }
 
-    private fun calculateAttackGoalPosition(context: CombatContext, combatTarget: CombatTarget): Vec3 {
+    private fun calculateAttackGoalPosition(context: CombatContext, combatTarget: CombatTarget): Vec3? {
         tryFollowCachedCombatPath(context, combatTarget)?.let {
             return it
+        }
+
+        if (tryUseFailedRouteCache(combatTarget)) {
+            return null
         }
 
         findBestAttackRoute(context, combatTarget)?.let { route ->
@@ -388,7 +471,12 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         }
 
         clearCombatPath()
-        return calculateRoutedDestination(context, calculateTargetLookPosition(combatTarget))
+        cacheFailedRoute(combatTarget)
+        activeDiagnostics?.apply {
+            selectedMode = "attackNoRoute"
+            selectedGoalBlock = combatTarget.entity.blockPosition()
+        }
+        return null
     }
 
     private fun tryFollowCachedCombatPath(context: CombatContext, combatTarget: CombatTarget): Vec3? {
@@ -407,8 +495,45 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             selectedMode = "cached"
             selectedGoalBlock = cachedPath.goalBlock
             selectedPathNodes = cachedPath.nodes.size
+            val climbableNodes = cachedPath.nodes.filter(::isClimbablePathNode)
+            selectedClimbablePathNodes = climbableNodes.size
+            climbablePathNodeBlocks.clear()
+            climbablePathNodeBlocks += climbableNodes.take(MAX_LOGGED_CANDIDATES)
         }
         return followCachedCombatPath(cachedPath, context.playerPosition)
+    }
+
+    private fun tryUseFailedRouteCache(combatTarget: CombatTarget): Boolean {
+        val failedRoute = failedCombatRoute ?: return false
+        val remainingTicks = FAILED_ROUTE_CACHE_TICKS - (player.tickCount - failedRoute.createdTick)
+        val reusable = remainingTicks > 0 &&
+            failedRoute.targetId == combatTarget.entity.id &&
+            failedRoute.targetBlock == combatTarget.entity.blockPosition() &&
+            failedRoute.playerBlock == player.blockPosition()
+
+        if (!reusable) {
+            failedCombatRoute = null
+            return false
+        }
+
+        clearCombatPath()
+        activeDiagnostics?.apply {
+            cacheState = "noRoute"
+            selectedMode = "attackNoRouteCached"
+            selectedGoalBlock = failedRoute.targetBlock
+            noRouteCacheTicks = remainingTicks
+        }
+        return true
+    }
+
+    private fun cacheFailedRoute(combatTarget: CombatTarget) {
+        failedCombatRoute = FailedCombatRoute(
+            targetId = combatTarget.entity.id,
+            targetBlock = combatTarget.entity.blockPosition(),
+            playerBlock = player.blockPosition(),
+            createdTick = player.tickCount,
+        )
+        activeDiagnostics?.noRouteCacheTicks = FAILED_ROUTE_CACHE_TICKS
     }
 
     private fun findBestAttackRoute(context: CombatContext, combatTarget: CombatTarget): AttackRoute? {
@@ -552,11 +677,16 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             createdTick = player.tickCount,
         )
         cachedCombatPath = cachedPath
+        failedCombatRoute = null
+        val climbableNodes = cachedPath.nodes.filter(::isClimbablePathNode)
         activeDiagnostics?.apply {
             selectedMode = if (route.path == null) "directAttack" else "pathAttack"
             selectedGoalBlock = route.candidate.blockPos
             selectedCost = route.cost
             selectedPathNodes = route.path?.nodes?.size ?: 0
+            selectedClimbablePathNodes = climbableNodes.size
+            climbablePathNodeBlocks.clear()
+            climbablePathNodeBlocks += climbableNodes.take(MAX_LOGGED_CANDIDATES)
         }
 
         return followCachedCombatPath(cachedPath, context.playerPosition) ?: route.candidate.position
@@ -567,11 +697,12 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         skipReachableWaypoints(cachedPath, playerPosition)
 
         if (cachedPath.waypointIndex >= cachedPath.nodes.size) {
-            activeWaypoint = cachedPath.destination
+            setActiveWaypoint(cachedPath.destination)
             return cachedPath.destination
         }
 
-        val waypoint = cachedPath.nodes[cachedPath.waypointIndex].bottomCenter
+        val waypointNode = cachedPath.nodes[cachedPath.waypointIndex]
+        val waypoint = waypointNode.bottomCenter
         if (isStuckOnWaypoint(cachedPath, playerPosition, waypoint)) {
             penalizeGoal(cachedPath.goalBlock)
             clearCombatPath()
@@ -579,8 +710,15 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             return null
         }
 
-        activeWaypoint = waypoint
+        setActiveWaypoint(waypoint, waypointNode)
         return waypoint
+    }
+
+    private fun setActiveWaypoint(waypoint: Vec3, waypointNode: Vec3i? = null) {
+        activeWaypoint = waypoint
+        activeWaypointBlock = waypointNode
+        activeWaypointClimbable = waypointNode?.let(::isClimbablePathNode) ?: false
+        activeDiagnostics?.activeWaypointClimbable = activeWaypointClimbable
     }
 
     private fun advanceReachedWaypoints(cachedPath: CachedCombatPath, playerPosition: Vec3) {
@@ -588,6 +726,21 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         while (nextIndex < cachedPath.nodes.size &&
             playerPosition.distanceToSqr(cachedPath.nodes[nextIndex].bottomCenter) <= WAYPOINT_REACHED_DISTANCE_SQ
         ) {
+            // Don't advance past a climbable node to a non-climbable node
+            // unless the player has actually climbed above it
+            val currentNode = cachedPath.nodes[nextIndex]
+            if (isClimbablePathNode(currentNode)) {
+                val nextNodeIndex = nextIndex + 1
+                if (nextNodeIndex < cachedPath.nodes.size) {
+                    val nextNode = cachedPath.nodes[nextNodeIndex]
+                    val isNextClimbableInColumn = isClimbablePathNode(nextNode) &&
+                        nextNode.x == currentNode.x && nextNode.z == currentNode.z
+
+                    if (!isNextClimbableInColumn && playerPosition.y < currentNode.y + CLIMB_CLEAR_EPSILON) {
+                        break
+                    }
+                }
+            }
             nextIndex++
         }
 
@@ -596,6 +749,10 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
     private fun skipReachableWaypoints(cachedPath: CachedCombatPath, playerPosition: Vec3) {
         for (index in cachedPath.nodes.lastIndex downTo cachedPath.waypointIndex + 1) {
+            if (containsClimbableWaypoint(cachedPath.nodes, cachedPath.waypointIndex, index, ::isClimbablePathNode)) {
+                continue
+            }
+
             val waypoint = cachedPath.nodes[index].bottomCenter
             if (playerPosition.distanceTo(waypoint) <= directRange && hasStraightPath(playerPosition, waypoint)) {
                 updateWaypointIndex(cachedPath, index)
@@ -635,7 +792,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
     private fun calculateRoutedDestination(context: CombatContext, destination: Vec3): Vec3 {
         val distance = context.playerPosition.distanceTo(destination)
         if (distance <= directRange && hasStraightPath(context.playerPosition, destination)) {
-            activeWaypoint = destination
+            setActiveWaypoint(destination)
             activeDiagnostics?.apply {
                 selectedMode = "$selectedMode:direct"
                 selectedGoalBlock = blockPosOf(destination)
@@ -649,18 +806,19 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             val nextNode = path?.nodes?.firstOrNull()
             if (nextNode != null) {
                 val waypoint = nextNode.bottomCenter
-                activeWaypoint = waypoint
+                setActiveWaypoint(waypoint, nextNode)
                 activeDiagnostics?.apply {
                     selectedMode = "$selectedMode:path"
                     selectedGoalBlock = destinationBlock
                     selectedCost = path.totalCost
                     selectedPathNodes = path.nodes.size
+                    selectedClimbablePathNodes = path.nodes.count(::isClimbablePathNode)
                 }
                 return waypoint
             }
         }
 
-        activeWaypoint = destination
+        setActiveWaypoint(destination)
         activeDiagnostics?.apply {
             selectedMode = "$selectedMode:raw"
             selectedGoalBlock = blockPosOf(destination)
@@ -794,8 +952,11 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             }
             add("goal", result?.toJsonArray())
             add("waypoint", trace.activeWaypoint?.toJsonArray())
+            addProperty("waypointClimbable", trace.activeWaypointClimbable)
+            add("waypointBlock", activeWaypointBlock?.toJsonObject())
             add("selectedGoalBlock", trace.selectedGoalBlock?.toJsonObject())
             add("acceptedCandidateBlocks", trace.acceptedCandidateBlocks.toBlockJsonArray())
+            add("climbablePathNodes", trace.climbablePathNodeBlocks.toBlockJsonArray())
             add("cachedPath", cachedCombatPath?.toJsonObject())
             if (Diagnostics.scanBlocks) {
                 add("nearbyBlocks", scanNearbyDebugBlocks(target))
@@ -827,6 +988,8 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             addProperty("raycasts", raycasts)
             addProperty("selectedCost", selectedCost)
             addProperty("selectedPathNodes", selectedPathNodes)
+            addProperty("selectedClimbablePathNodes", selectedClimbablePathNodes)
+            addProperty("noRouteCacheTicks", noRouteCacheTicks)
         }
     }
 
@@ -839,6 +1002,10 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             addProperty("createdTick", createdTick)
             addProperty("waypointIndex", waypointIndex)
             add("nodes", nodes.take(MAX_LOGGED_CANDIDATES).toBlockJsonArray())
+            add(
+                "climbableNodes",
+                nodes.filter(::isClimbablePathNode).take(MAX_LOGGED_CANDIDATES).toBlockJsonArray()
+            )
         }
     }
 
@@ -871,13 +1038,15 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                 for (z in minZ..maxZ) {
                     mutablePos.set(x, y, z)
                     val state = world.getBlockState(mutablePos)
-                    if (state.isAir || state.getCollisionShape(world, mutablePos).isEmpty) {
+                    val climbable = isClimbableBlock(mutablePos)
+                    if (state.isAir || (state.getCollisionShape(world, mutablePos).isEmpty && !climbable)) {
                         continue
                     }
 
                     result.add(JsonObject().apply {
                         add("pos", mutablePos.immutable().toJsonObject())
                         addProperty("block", BuiltInRegistries.BLOCK.getKey(state.block).toString())
+                        addProperty("climbable", climbable)
                     })
 
                     if (result.size() >= Diagnostics.maxBlocks) {
