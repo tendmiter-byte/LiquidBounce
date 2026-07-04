@@ -24,6 +24,7 @@ import net.ccbluex.liquidbounce.test.assertNotNull
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
+import kotlin.math.abs
 
 class GraphSearchTest {
 
@@ -304,5 +305,65 @@ class GraphSearchTest {
         )
 
         assertNull(result)
+    }
+
+    @Test
+    fun `grid search routes around short wall`() {
+        val start = GridCell(1, 0)
+        val goal = GridCell(1, 2)
+        val blocked = setOf(GridCell(0, 1), GridCell(1, 1), GridCell(2, 1))
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it == goal },
+            neighbors = { cell -> cell.walkableNeighbors(blocked) },
+            heuristic = { cell -> cell.manhattanDistance(goal).toDouble() },
+            maxIterations = 100,
+            maxCost = 20.0,
+        )
+
+        val path = assertNotNull(result)
+        assertEquals(start, path.nodes.first())
+        assertEquals(goal, path.nodes.last())
+        assertNull(path.nodes.firstOrNull { it in blocked })
+        assertEquals(7, path.nodes.size)
+    }
+
+    @Test
+    fun `grid search returns null when wall blocks every route`() {
+        val start = GridCell(1, 0)
+        val goal = GridCell(1, 2)
+        val blocked = (-2..4).mapTo(hashSetOf()) { x -> GridCell(x, 1) }
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it == goal },
+            neighbors = { cell -> cell.walkableNeighbors(blocked) },
+            heuristic = { cell -> cell.manhattanDistance(goal).toDouble() },
+            maxIterations = 100,
+            maxCost = 20.0,
+        )
+
+        assertNull(result)
+    }
+
+    private data class GridCell(val x: Int, val z: Int) {
+
+        fun manhattanDistance(other: GridCell): Int {
+            return abs(x - other.x) + abs(z - other.z)
+        }
+
+        fun walkableNeighbors(blocked: Set<GridCell>): List<WeightedEdge<GridCell>> {
+            return listOf(
+                GridCell(x - 1, z),
+                GridCell(x + 1, z),
+                GridCell(x, z - 1),
+                GridCell(x, z + 1),
+            )
+                .asSequence()
+                .filter { it.x in -2..4 && it.z in 0..2 && it !in blocked }
+                .map { WeightedEdge(it, 1.0) }
+                .toList()
+        }
     }
 }

@@ -18,29 +18,42 @@
  */
 package net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features
 
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 import net.ccbluex.liquidbounce.config.types.group.ToggleableValueGroup
 import net.ccbluex.liquidbounce.config.types.group.ValueGroup
 import net.ccbluex.liquidbounce.event.events.MovementInputEvent
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura.clicker
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura.targetTracker
+import net.ccbluex.liquidbounce.features.module.modules.misc.debugrecorder.modes.GenericDebugRecorder
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
+import net.ccbluex.liquidbounce.utils.block.AStarPathBuilder
+import net.ccbluex.liquidbounce.utils.block.BlockPath
+import net.ccbluex.liquidbounce.utils.client.logger
 import net.ccbluex.liquidbounce.utils.entity.doesCollideAt
 import net.ccbluex.liquidbounce.utils.entity.doesNotCollideBelow
 import net.ccbluex.liquidbounce.utils.entity.rotation
 import net.ccbluex.liquidbounce.utils.entity.squaredBoxedDistanceTo
+import net.ccbluex.liquidbounce.utils.io.toJsonArray
+import net.ccbluex.liquidbounce.utils.math.bottomCenter
 import net.ccbluex.liquidbounce.utils.math.fma
 import net.ccbluex.liquidbounce.utils.math.sq
+import net.ccbluex.liquidbounce.utils.movement.DirectionalInput
+import net.ccbluex.liquidbounce.utils.movement.getDegreesRelativeToView
+import net.ccbluex.liquidbounce.utils.movement.getDirectionalInputForDegrees
 import net.ccbluex.liquidbounce.utils.navigation.NavigationBaseValueGroup
-import net.ccbluex.liquidbounce.utils.block.AStarPathBuilder
 import net.ccbluex.liquidbounce.utils.raytracing.PathfinderRaycast
 import net.ccbluex.liquidbounce.utils.raytracing.threadLocalPos
 import net.minecraft.core.BlockPos
+import net.minecraft.core.Vec3i
+import net.minecraft.core.registries.BuiltInRegistries
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.phys.Vec3
 import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -61,20 +74,95 @@ data class CombatTarget(
     val outOfDanger: Boolean
 )
 
+private data class AttackCandidate(
+    val position: Vec3,
+    val blockPos: BlockPos,
+    val dangerous: Boolean,
+    val targetLookDistanceSq: Double,
+    val playerDistanceSq: Double,
+)
+
+private data class AttackRoute(
+    val candidate: AttackCandidate,
+    val path: BlockPath?,
+    val cost: Double,
+    val penalized: Boolean,
+)
+
+private data class CachedCombatPath(
+    val targetId: Int,
+    val targetBlock: BlockPos,
+    val goalBlock: BlockPos,
+    val destination: Vec3,
+    val nodes: List<Vec3i>,
+    val createdTick: Int,
+    var waypointIndex: Int = 0,
+    var bestWaypointDistanceSq: Double = Double.POSITIVE_INFINITY,
+    var stagnantTicks: Int = 0,
+)
+
+private class FightBotDiagnosticsTrace(
+    val startedNs: Long = System.nanoTime(),
+) {
+    var totalNs = 0L
+    var candidateScanNs = 0L
+    var routeSelectionNs = 0L
+    var pathfindingNs = 0L
+    var raycastNs = 0L
+
+    var candidateDuplicates = 0
+    var candidateCollisions = 0
+    var candidateAttackLosFailures = 0
+    var acceptedCandidates = 0
+    var routeCandidates = 0
+    var directRoutes = 0
+    var pathRequests = 0
+    var pathSuccesses = 0
+    var pathFailures = 0
+    var raycasts = 0
+    var cacheState = "none"
+    var selectedMode = "none"
+    var selectedCost = 0.0
+    var selectedPathNodes = 0
+    var stuck = false
+    var selectedGoalBlock: BlockPos? = null
+    var activeWaypoint: Vec3? = null
+    val acceptedCandidateBlocks = mutableListOf<BlockPos>()
+}
+
+private const val PATH_CACHE_TICKS = 40
+private const val PATH_MAX_COST = 40
+private const val MAX_PATHED_ATTACK_CANDIDATES = 8
+private const val WAYPOINT_REACHED_DISTANCE_SQ = 0.55 * 0.55
+private const val STUCK_TICKS = 8
+private const val STUCK_PROGRESS_EPSILON_SQ = 0.04
+private const val BAD_GOAL_TICKS = 25
+private const val BAD_GOAL_COST = 20.0
+private const val ATTACK_POSITION_STEP = 10
+private const val MIN_ATTACK_SLOT_RADIUS = 1.0
+private const val MAX_LOGGED_CANDIDATES = 32
+
 /**
  * A fight bot that handles combat and movement automatically
  */
+@Suppress("LargeClass", "TooManyFunctions")
 object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura, "FightBot", false), AStarPathBuilder {
 
     override val allowDiagonal: Boolean get() = true
     override val maxIterations: Int get() = 500
-    override val stopRange: Double get() = 1.5
+    override val stopRange: Double get() = 0.75
 
     private val opponentRange by float("OpponentRange", 3f, 0.1f..10f)
     private val dangerousYawDiff by float("DangerousYaw", 55f, 0f..90f, suffix = "°")
     private val runawayOnCooldown by boolean("RunawayOnCooldown", true)
     private val pathfindingRange by float("PathfindingRange", 15f, 2f..50f)
     private val directRange by float("DirectRange", 4f, 1f..10f)
+
+    private var cachedCombatPath: CachedCombatPath? = null
+    private var activeWaypoint: Vec3? = null
+    private var penalizedGoal: BlockPos? = null
+    private var penalizedGoalUntilTick = 0
+    private var activeDiagnostics: FightBotDiagnosticsTrace? = null
 
     internal object TargetFilter : ValueGroup("TargetFilter") {
         internal var range by float("Range", 50f, 10f..100f)
@@ -90,9 +178,20 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         internal val radius by float("Radius", 5f, 2f..10f)
     }
 
+    private object Diagnostics : ToggleableValueGroup(this, "Diagnostics", false) {
+        internal val intervalTicks by int("IntervalTicks", 10, 1..100, "ticks")
+        internal val slowThresholdMs by int("SlowThreshold", 4, 1..100, "ms")
+        internal val scanBlocks by boolean("ScanBlocks", true)
+        internal val blockScanRange by int("BlockScanRange", 6, 1..16)
+        internal val maxBlocks by int("MaxBlocks", 64, 1..256)
+        internal val clientLog by boolean("ClientLog", false)
+        internal var lastRecordTick = -1000
+    }
+
     init {
         tree(TargetFilter)
         tree(LeaderFollower)
+        tree(Diagnostics)
     }
 
     fun updateTarget() {
@@ -143,52 +242,46 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
      * @return Target position as Vec3d
      */
     override fun calculateGoalPosition(context: CombatContext): Vec3? {
-        val destination = if (LeaderFollower.running && LeaderFollower.username.isNotEmpty()) {
+        val diagnostics = if (Diagnostics.running) FightBotDiagnosticsTrace() else null
+        activeDiagnostics = diagnostics
+
+        var result: Vec3? = null
+        try {
+            result = calculateGoalPositionInternal(context)
+            return result
+        } finally {
+            if (diagnostics != null) {
+                diagnostics.totalNs = System.nanoTime() - diagnostics.startedNs
+                diagnostics.activeWaypoint = activeWaypoint
+                publishDiagnostics(context, diagnostics, result)
+            }
+            activeDiagnostics = null
+        }
+    }
+
+    private fun calculateGoalPositionInternal(context: CombatContext): Vec3? {
+        activeWaypoint = null
+
+        if (LeaderFollower.running && LeaderFollower.username.isNotEmpty()) {
+            clearCombatPath()
             val leader = world.players().find { it.gameProfile.name == LeaderFollower.username }
-            if (leader != null) {
-                calculateLeaderGoalPosition(leader.position(), context.playerPosition)
-            } else {
-                null
-            }
-        } else {
-            val combatTarget = context.combatTarget ?: return null
-            if (runawayOnCooldown && !clicker.willClickAt()) {
-                calculateRunawayPosition(context, combatTarget)
-            } else {
-                calculateAttackPosition(context, combatTarget)
-            }
-        } ?: return null
-
-        val start = context.playerPosition
-        val straightClear = PathfinderRaycast.hasLineOfSight(
-            level = world,
-            startX = start.x, startY = start.y + 0.5, startZ = start.z,
-            endX = destination.x, endY = destination.y + 0.5, endZ = destination.z,
-            allowStartInside = true,
-            isSolid = ::isBlockSolidOrHazardous
-        )
-
-        val distance = if (context.combatTarget != null) {
-            player.distanceTo(context.combatTarget.entity).toDouble()
-        } else {
-            context.playerPosition.distanceTo(destination)
+            activeDiagnostics?.selectedMode = "leader"
+            return leader?.let { calculateLeaderGoalPosition(it.position(), context.playerPosition) }
         }
 
-        if (straightClear && distance <= directRange) {
-            return destination
+        val combatTarget = context.combatTarget ?: run {
+            clearCombatPath()
+            activeDiagnostics?.selectedMode = "noTarget"
+            return null
         }
 
-        if (distance <= pathfindingRange) {
-            val startPos = player.blockPosition()
-            val endPos = BlockPos(floor(destination.x).toInt(), floor(destination.y).toInt(), floor(destination.z).toInt())
-            val path = findPath(startPos, endPos, maxCost = 40)
-            if (path.isNotEmpty()) {
-                val nextNode = path.first()
-                return Vec3(nextNode.x + 0.5, nextNode.y.toDouble(), nextNode.z + 0.5)
-            }
+        if (runawayOnCooldown && !clicker.willClickAt()) {
+            clearCombatPath()
+            activeDiagnostics?.selectedMode = "runaway"
+            return calculateRoutedDestination(context, calculateRunawayPosition(context, combatTarget))
         }
 
-        return destination
+        return calculateAttackGoalPosition(context, combatTarget)
     }
 
     /**
@@ -196,15 +289,21 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
      *
      * @param event Movement input event to modify
      */
-    override fun handleMovementAssist(event: MovementInputEvent, context: CombatContext) {
-        super.handleMovementAssist(event, context)
+    override fun calculateDirectionalInput(currentInput: DirectionalInput, goal: Vec3): DirectionalInput {
+        val degrees = getDegreesRelativeToView(goal.subtract(player.position()), player.yRot)
+        return getDirectionalInputForDegrees(DirectionalInput.NONE, degrees, deadAngle = 20.0F)
+    }
 
-        val contextAllowsJump = context.combatTarget != null && context.combatTarget.outOfDistance
-            && !context.combatTarget.outOfDanger
-        val goal = calculateGoalPosition(context) ?: return
-        val leaderAllowsJump = LeaderFollower.running && player.position().distanceTo(goal) > LeaderFollower.radius
+    override fun handleMovementAssist(event: MovementInputEvent, context: CombatContext, goal: Vec3) {
+        super.handleMovementAssist(event, context, goal)
 
-        if (contextAllowsJump || leaderAllowsJump) {
+        val waypoint = activeWaypoint ?: goal
+        val needsStepUp = waypoint.y > player.y + 0.45 && player.onGround()
+        val blockedWhileMoving = player.horizontalCollision &&
+            player.onGround() &&
+            player.position().distanceToSqr(waypoint) > WAYPOINT_REACHED_DISTANCE_SQ
+
+        if (needsStepUp || blockedWhileMoving) {
             event.jump = true
         }
     }
@@ -279,47 +378,553 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         )
     }
 
-    private fun calculateAttackPosition(context: CombatContext, combatTarget: CombatTarget): Vec3 {
-        val target = combatTarget.entity
-        val targetLookPosition = target.position().fma(
-            combatTarget.range.toDouble(), combatTarget.targetRotation.directionVector
-        )
+    private fun calculateAttackGoalPosition(context: CombatContext, combatTarget: CombatTarget): Vec3 {
+        tryFollowCachedCombatPath(context, combatTarget)?.let {
+            return it
+        }
 
-        return (-180..180 step 10)
+        findBestAttackRoute(context, combatTarget)?.let { route ->
+            return activateAttackRoute(context, combatTarget, route)
+        }
+
+        clearCombatPath()
+        return calculateRoutedDestination(context, calculateTargetLookPosition(combatTarget))
+    }
+
+    private fun tryFollowCachedCombatPath(context: CombatContext, combatTarget: CombatTarget): Vec3? {
+        val cachedPath = cachedCombatPath ?: run {
+            activeDiagnostics?.cacheState = "miss"
+            return null
+        }
+        if (!cachedPath.isReusableFor(combatTarget)) {
+            clearCombatPath()
+            activeDiagnostics?.cacheState = "invalid"
+            return null
+        }
+
+        activeDiagnostics?.apply {
+            cacheState = "hit"
+            selectedMode = "cached"
+            selectedGoalBlock = cachedPath.goalBlock
+            selectedPathNodes = cachedPath.nodes.size
+        }
+        return followCachedCombatPath(cachedPath, context.playerPosition)
+    }
+
+    private fun findBestAttackRoute(context: CombatContext, combatTarget: CombatTarget): AttackRoute? {
+        val diagnosticsStart = System.nanoTime()
+
+        try {
+            val candidates = generateAttackCandidates(context, combatTarget)
+            activeDiagnostics?.routeCandidates = candidates.size
+
+            candidates
+                .asSequence()
+                .mapNotNull { candidate -> createDirectRoute(context, candidate) }
+                .minWithOrNull(attackRouteComparator())
+                ?.let { return it }
+
+            val startPos = player.blockPosition()
+            return candidates
+                .asSequence()
+                .filter { it.playerDistanceSq <= pathfindingRange.sq() }
+                .sortedWith(pathCandidateComparator())
+                .take(MAX_PATHED_ATTACK_CANDIDATES)
+                .mapNotNull { candidate ->
+                    val path = findMeasuredPath(startPos, candidate.blockPos)
+                    if (path == null || path.nodes.isEmpty()) {
+                        return@mapNotNull null
+                    }
+
+                    AttackRoute(
+                        candidate = candidate,
+                        path = path,
+                        cost = path.totalCost,
+                        penalized = isGoalPenalized(candidate.blockPos)
+                    )
+                }
+                .minWithOrNull(attackRouteComparator())
+        } finally {
+            activeDiagnostics?.routeSelectionNs =
+                activeDiagnostics?.routeSelectionNs?.plus(System.nanoTime() - diagnosticsStart) ?: 0L
+        }
+    }
+
+    private fun createDirectRoute(context: CombatContext, candidate: AttackCandidate): AttackRoute? {
+        if (context.playerPosition.distanceTo(candidate.position) > directRange ||
+            !hasStraightPath(context.playerPosition, candidate.position)
+        ) {
+            return null
+        }
+
+        activeDiagnostics?.directRoutes = activeDiagnostics?.directRoutes?.plus(1) ?: 0
+        return AttackRoute(
+            candidate = candidate,
+            path = null,
+            cost = context.playerPosition.distanceTo(candidate.position),
+            penalized = isGoalPenalized(candidate.blockPos)
+        )
+    }
+
+    private fun pathCandidateComparator(): Comparator<AttackCandidate> {
+        return compareBy<AttackCandidate> { if (isGoalPenalized(it.blockPos)) 1 else 0 }
+            .thenBy { if (it.dangerous) 1 else 0 }
+            .thenBy { it.playerDistanceSq }
+            .thenBy { it.targetLookDistanceSq }
+    }
+
+    private fun attackRouteComparator(): Comparator<AttackRoute> {
+        return compareBy<AttackRoute> { it.cost + if (it.penalized) BAD_GOAL_COST else 0.0 }
+            .thenBy { if (it.candidate.dangerous) 1 else 0 }
+            .thenBy { it.candidate.targetLookDistanceSq }
+            .thenBy { it.candidate.playerDistanceSq }
+    }
+
+    private fun generateAttackCandidates(context: CombatContext, combatTarget: CombatTarget): List<AttackCandidate> {
+        val diagnosticsStart = System.nanoTime()
+        val target = combatTarget.entity
+        val attackRadius = getAttackSlotRadius(combatTarget)
+        val targetLookPosition = calculateTargetLookPosition(combatTarget)
+        val seenBlocks = hashSetOf<BlockPos>()
+
+        val candidates = (-180..180 step ATTACK_POSITION_STEP)
             .mapNotNull { yaw ->
                 val rotation = Rotation(yaw = yaw.toFloat(), pitch = 0.0F)
-                val position = target.position().fma(combatTarget.range.toDouble(), rotation.directionVector)
+                val rawPosition = target.position().fma(attackRadius, rotation.directionVector)
+                val blockPos = blockPosOf(rawPosition)
+                val position = blockPos.bottomCenter
 
-                // Check if this point collides with a block
+                if (!seenBlocks.add(blockPos)) {
+                    activeDiagnostics?.candidateDuplicates =
+                        activeDiagnostics?.candidateDuplicates?.plus(1) ?: 0
+                    return@mapNotNull null
+                }
+
                 if (player.doesCollideAt(position)) {
+                    activeDiagnostics?.candidateCollisions =
+                        activeDiagnostics?.candidateCollisions?.plus(1) ?: 0
                     return@mapNotNull null
                 }
 
-                val start = context.playerPosition
-                val pathClear = PathfinderRaycast.hasLineOfSight(
-                    level = world,
-                    startX = start.x, startY = start.y + 0.5, startZ = start.z,
-                    endX = position.x, endY = position.y + 0.5, endZ = position.z,
-                    allowStartInside = true,
-                    isSolid = ::isBlockSolidOrHazardous
-                )
-
-                if (!pathClear) {
+                if (!canAttackFrom(position, target)) {
+                    activeDiagnostics?.candidateAttackLosFailures =
+                        activeDiagnostics?.candidateAttackLosFailures?.plus(1) ?: 0
                     return@mapNotNull null
                 }
 
-                val isInAngle = rotation.angleTo(combatTarget.targetRotation) <= dangerousYawDiff
+                val dangerous = rotation.angleTo(combatTarget.targetRotation) <= dangerousYawDiff
                 ModuleDebug.debugGeometry(
                     this,
                     "Possible Position $yaw",
-                    ModuleDebug.DebuggedPoint(position, if (!isInAngle) Color4b.GREEN else Color4b.RED)
+                    ModuleDebug.DebuggedPoint(position, if (!dangerous) Color4b.GREEN else Color4b.RED)
                 )
 
-                if (isInAngle) null else position
+                AttackCandidate(
+                    position = position,
+                    blockPos = blockPos,
+                    dangerous = dangerous,
+                    targetLookDistanceSq = position.distanceToSqr(targetLookPosition),
+                    playerDistanceSq = position.distanceToSqr(context.playerPosition),
+                )
             }
-            .sortedBy { pos -> pos.distanceToSqr(targetLookPosition) }
-            .minByOrNull { pos -> pos.distanceToSqr(context.playerPosition) }
-            ?: targetLookPosition
+
+        activeDiagnostics?.apply {
+            candidateScanNs += System.nanoTime() - diagnosticsStart
+            acceptedCandidates = candidates.size
+            acceptedCandidateBlocks.clear()
+            acceptedCandidateBlocks += candidates.map { it.blockPos }.take(MAX_LOGGED_CANDIDATES)
+        }
+
+        return candidates
+    }
+
+    private fun activateAttackRoute(
+        context: CombatContext,
+        combatTarget: CombatTarget,
+        route: AttackRoute
+    ): Vec3 {
+        val cachedPath = CachedCombatPath(
+            targetId = combatTarget.entity.id,
+            targetBlock = combatTarget.entity.blockPosition(),
+            goalBlock = route.candidate.blockPos,
+            destination = route.candidate.position,
+            nodes = route.path?.nodes.orEmpty(),
+            createdTick = player.tickCount,
+        )
+        cachedCombatPath = cachedPath
+        activeDiagnostics?.apply {
+            selectedMode = if (route.path == null) "directAttack" else "pathAttack"
+            selectedGoalBlock = route.candidate.blockPos
+            selectedCost = route.cost
+            selectedPathNodes = route.path?.nodes?.size ?: 0
+        }
+
+        return followCachedCombatPath(cachedPath, context.playerPosition) ?: route.candidate.position
+    }
+
+    private fun followCachedCombatPath(cachedPath: CachedCombatPath, playerPosition: Vec3): Vec3? {
+        advanceReachedWaypoints(cachedPath, playerPosition)
+        skipReachableWaypoints(cachedPath, playerPosition)
+
+        if (cachedPath.waypointIndex >= cachedPath.nodes.size) {
+            activeWaypoint = cachedPath.destination
+            return cachedPath.destination
+        }
+
+        val waypoint = cachedPath.nodes[cachedPath.waypointIndex].bottomCenter
+        if (isStuckOnWaypoint(cachedPath, playerPosition, waypoint)) {
+            penalizeGoal(cachedPath.goalBlock)
+            clearCombatPath()
+            activeDiagnostics?.stuck = true
+            return null
+        }
+
+        activeWaypoint = waypoint
+        return waypoint
+    }
+
+    private fun advanceReachedWaypoints(cachedPath: CachedCombatPath, playerPosition: Vec3) {
+        var nextIndex = cachedPath.waypointIndex
+        while (nextIndex < cachedPath.nodes.size &&
+            playerPosition.distanceToSqr(cachedPath.nodes[nextIndex].bottomCenter) <= WAYPOINT_REACHED_DISTANCE_SQ
+        ) {
+            nextIndex++
+        }
+
+        updateWaypointIndex(cachedPath, nextIndex)
+    }
+
+    private fun skipReachableWaypoints(cachedPath: CachedCombatPath, playerPosition: Vec3) {
+        for (index in cachedPath.nodes.lastIndex downTo cachedPath.waypointIndex + 1) {
+            val waypoint = cachedPath.nodes[index].bottomCenter
+            if (playerPosition.distanceTo(waypoint) <= directRange && hasStraightPath(playerPosition, waypoint)) {
+                updateWaypointIndex(cachedPath, index)
+                return
+            }
+        }
+    }
+
+    private fun updateWaypointIndex(cachedPath: CachedCombatPath, waypointIndex: Int) {
+        if (cachedPath.waypointIndex == waypointIndex) {
+            return
+        }
+
+        cachedPath.waypointIndex = waypointIndex
+        cachedPath.bestWaypointDistanceSq = Double.POSITIVE_INFINITY
+        cachedPath.stagnantTicks = 0
+    }
+
+    private fun isStuckOnWaypoint(cachedPath: CachedCombatPath, playerPosition: Vec3, waypoint: Vec3): Boolean {
+        val distanceSq = playerPosition.distanceToSqr(waypoint)
+        if (distanceSq < cachedPath.bestWaypointDistanceSq - STUCK_PROGRESS_EPSILON_SQ) {
+            cachedPath.bestWaypointDistanceSq = distanceSq
+            cachedPath.stagnantTicks = 0
+            return false
+        }
+
+        cachedPath.stagnantTicks++
+        return cachedPath.stagnantTicks >= STUCK_TICKS && distanceSq > WAYPOINT_REACHED_DISTANCE_SQ
+    }
+
+    private fun CachedCombatPath.isReusableFor(combatTarget: CombatTarget): Boolean {
+        return targetId == combatTarget.entity.id &&
+            targetBlock == combatTarget.entity.blockPosition() &&
+            player.tickCount - createdTick <= PATH_CACHE_TICKS
+    }
+
+    private fun calculateRoutedDestination(context: CombatContext, destination: Vec3): Vec3 {
+        val distance = context.playerPosition.distanceTo(destination)
+        if (distance <= directRange && hasStraightPath(context.playerPosition, destination)) {
+            activeWaypoint = destination
+            activeDiagnostics?.apply {
+                selectedMode = "$selectedMode:direct"
+                selectedGoalBlock = blockPosOf(destination)
+            }
+            return destination
+        }
+
+        if (distance <= pathfindingRange) {
+            val destinationBlock = blockPosOf(destination)
+            val path = findMeasuredPath(player.blockPosition(), destinationBlock)
+            val nextNode = path?.nodes?.firstOrNull()
+            if (nextNode != null) {
+                val waypoint = nextNode.bottomCenter
+                activeWaypoint = waypoint
+                activeDiagnostics?.apply {
+                    selectedMode = "$selectedMode:path"
+                    selectedGoalBlock = destinationBlock
+                    selectedCost = path.totalCost
+                    selectedPathNodes = path.nodes.size
+                }
+                return waypoint
+            }
+        }
+
+        activeWaypoint = destination
+        activeDiagnostics?.apply {
+            selectedMode = "$selectedMode:raw"
+            selectedGoalBlock = blockPosOf(destination)
+        }
+        return destination
+    }
+
+    private fun findMeasuredPath(start: Vec3i, end: Vec3i): BlockPath? {
+        val diagnosticsStart = System.nanoTime()
+        activeDiagnostics?.pathRequests = activeDiagnostics?.pathRequests?.plus(1) ?: 0
+
+        val path = findPathResult(start, end, PATH_MAX_COST)
+        activeDiagnostics?.apply {
+            pathfindingNs += System.nanoTime() - diagnosticsStart
+            if (path == null || path.nodes.isEmpty()) {
+                pathFailures++
+            } else {
+                pathSuccesses++
+            }
+        }
+
+        return path
+    }
+
+    private fun calculateTargetLookPosition(combatTarget: CombatTarget): Vec3 {
+        return combatTarget.entity.position().fma(
+            getAttackSlotRadius(combatTarget),
+            combatTarget.targetRotation.directionVector
+        )
+    }
+
+    private fun getAttackSlotRadius(combatTarget: CombatTarget): Double {
+        val configuredRange = min(ModuleKillAura.range.interactionRange, opponentRange).toDouble()
+        return min(configuredRange, max(combatTarget.distance, MIN_ATTACK_SLOT_RADIUS))
+    }
+
+    private fun canAttackFrom(position: Vec3, target: Entity): Boolean {
+        val start = position.add(0.0, player.eyeHeight.toDouble(), 0.0)
+        val end = target.eyePosition
+
+        val diagnosticsStart = System.nanoTime()
+        val result = PathfinderRaycast.hasLineOfSight(
+            level = world,
+            startX = start.x, startY = start.y, startZ = start.z,
+            endX = end.x, endY = end.y, endZ = end.z,
+            allowStartInside = true,
+            isSolid = ::isBlockSolidOrHazardous
+        )
+        recordRaycastTime(diagnosticsStart)
+
+        return result
+    }
+
+    private fun hasStraightPath(start: Vec3, end: Vec3): Boolean {
+        val diagnosticsStart = System.nanoTime()
+        val result = PathfinderRaycast.hasLineOfSight(
+            level = world,
+            startX = start.x, startY = start.y + 0.5, startZ = start.z,
+            endX = end.x, endY = end.y + 0.5, endZ = end.z,
+            allowStartInside = true,
+            isSolid = ::isBlockSolidOrHazardous
+        )
+        recordRaycastTime(diagnosticsStart)
+
+        return result
+    }
+
+    private fun recordRaycastTime(startedNs: Long) {
+        activeDiagnostics?.apply {
+            raycasts++
+            raycastNs += System.nanoTime() - startedNs
+        }
+    }
+
+    private fun blockPosOf(position: Vec3): BlockPos {
+        return BlockPos(floor(position.x).toInt(), floor(position.y).toInt(), floor(position.z).toInt())
+    }
+
+    private fun publishDiagnostics(
+        context: CombatContext,
+        trace: FightBotDiagnosticsTrace,
+        result: Vec3?
+    ) {
+        val totalMs = nsToMs(trace.totalNs)
+
+        ModuleDebug.debugParameter(this, "FightBot Time", "%.3fms".format(totalMs))
+        ModuleDebug.debugParameter(this, "FightBot Mode", trace.selectedMode)
+        ModuleDebug.debugParameter(this, "FightBot Cache", trace.cacheState)
+        ModuleDebug.debugParameter(this, "FightBot Candidates", trace.acceptedCandidates)
+        ModuleDebug.debugParameter(this, "FightBot Paths", "${trace.pathSuccesses}/${trace.pathRequests}")
+        ModuleDebug.debugParameter(this, "FightBot Path Time", "%.3fms".format(nsToMs(trace.pathfindingNs)))
+        ModuleDebug.debugParameter(this, "FightBot Ray Time", "%.3fms".format(nsToMs(trace.raycastNs)))
+
+        if (!shouldRecordDiagnostics(trace, totalMs)) {
+            return
+        }
+
+        Diagnostics.lastRecordTick = player.tickCount
+        val payload = createDiagnosticsPayload(context, trace, result)
+        GenericDebugRecorder.recordDebugInfo(ModuleKillAura, "fightbotDiagnostics", payload)
+
+        if (Diagnostics.clientLog) {
+            logger.info("[FightBotDiagnostics] $payload")
+        }
+    }
+
+    private fun shouldRecordDiagnostics(trace: FightBotDiagnosticsTrace, totalMs: Double): Boolean {
+        val intervalElapsed = player.tickCount - Diagnostics.lastRecordTick >= Diagnostics.intervalTicks
+        val slow = totalMs >= Diagnostics.slowThresholdMs
+
+        return intervalElapsed || slow || trace.stuck
+    }
+
+    private fun createDiagnosticsPayload(
+        context: CombatContext,
+        trace: FightBotDiagnosticsTrace,
+        result: Vec3?
+    ): JsonObject {
+        val target = context.combatTarget?.entity
+
+        return JsonObject().apply {
+            addProperty("tick", player.tickCount)
+            addProperty("mode", trace.selectedMode)
+            addProperty("cache", trace.cacheState)
+            addProperty("stuck", trace.stuck)
+            add("timings", trace.toTimingJson())
+            add("counts", trace.toCountJson())
+            add("player", createEntityPositionJson(player))
+            if (target != null) {
+                add("target", createEntityPositionJson(target))
+            }
+            add("goal", result?.toJsonArray())
+            add("waypoint", trace.activeWaypoint?.toJsonArray())
+            add("selectedGoalBlock", trace.selectedGoalBlock?.toJsonObject())
+            add("acceptedCandidateBlocks", trace.acceptedCandidateBlocks.toBlockJsonArray())
+            add("cachedPath", cachedCombatPath?.toJsonObject())
+            if (Diagnostics.scanBlocks) {
+                add("nearbyBlocks", scanNearbyDebugBlocks(target))
+            }
+        }
+    }
+
+    private fun FightBotDiagnosticsTrace.toTimingJson(): JsonObject {
+        return JsonObject().apply {
+            addProperty("totalMs", nsToMs(totalNs))
+            addProperty("candidateScanMs", nsToMs(candidateScanNs))
+            addProperty("routeSelectionMs", nsToMs(routeSelectionNs))
+            addProperty("pathfindingMs", nsToMs(pathfindingNs))
+            addProperty("raycastMs", nsToMs(raycastNs))
+        }
+    }
+
+    private fun FightBotDiagnosticsTrace.toCountJson(): JsonObject {
+        return JsonObject().apply {
+            addProperty("acceptedCandidates", acceptedCandidates)
+            addProperty("duplicateCandidates", candidateDuplicates)
+            addProperty("collisionRejectedCandidates", candidateCollisions)
+            addProperty("attackLosRejectedCandidates", candidateAttackLosFailures)
+            addProperty("routeCandidates", routeCandidates)
+            addProperty("directRoutes", directRoutes)
+            addProperty("pathRequests", pathRequests)
+            addProperty("pathSuccesses", pathSuccesses)
+            addProperty("pathFailures", pathFailures)
+            addProperty("raycasts", raycasts)
+            addProperty("selectedCost", selectedCost)
+            addProperty("selectedPathNodes", selectedPathNodes)
+        }
+    }
+
+    private fun CachedCombatPath.toJsonObject(): JsonObject {
+        return JsonObject().apply {
+            addProperty("targetId", targetId)
+            add("targetBlock", targetBlock.toJsonObject())
+            add("goalBlock", goalBlock.toJsonObject())
+            add("destination", destination.toJsonArray())
+            addProperty("createdTick", createdTick)
+            addProperty("waypointIndex", waypointIndex)
+            add("nodes", nodes.take(MAX_LOGGED_CANDIDATES).toBlockJsonArray())
+        }
+    }
+
+    private fun createEntityPositionJson(entity: Entity): JsonObject {
+        return JsonObject().apply {
+            addProperty("id", entity.id)
+            addProperty("name", entity.name.string)
+            addProperty("type", BuiltInRegistries.ENTITY_TYPE.getKey(entity.type).toString())
+            add("pos", entity.position().toJsonArray())
+            add("block", entity.blockPosition().toJsonObject())
+            add("velocity", entity.deltaMovement.toJsonArray())
+        }
+    }
+
+    private fun scanNearbyDebugBlocks(target: Entity?): JsonArray {
+        val playerBlock = player.blockPosition()
+        val targetBlock = target?.blockPosition() ?: playerBlock
+        val range = Diagnostics.blockScanRange
+        val minX = min(playerBlock.x, targetBlock.x) - range
+        val maxX = max(playerBlock.x, targetBlock.x) + range
+        val minY = min(playerBlock.y, targetBlock.y)
+        val maxY = max(playerBlock.y, targetBlock.y) + 3
+        val minZ = min(playerBlock.z, targetBlock.z) - range
+        val maxZ = max(playerBlock.z, targetBlock.z) + range
+        val result = JsonArray()
+        val mutablePos = BlockPos.MutableBlockPos()
+
+        for (x in minX..maxX) {
+            for (y in minY..maxY) {
+                for (z in minZ..maxZ) {
+                    mutablePos.set(x, y, z)
+                    val state = world.getBlockState(mutablePos)
+                    if (state.isAir || state.getCollisionShape(world, mutablePos).isEmpty) {
+                        continue
+                    }
+
+                    result.add(JsonObject().apply {
+                        add("pos", mutablePos.immutable().toJsonObject())
+                        addProperty("block", BuiltInRegistries.BLOCK.getKey(state.block).toString())
+                    })
+
+                    if (result.size() >= Diagnostics.maxBlocks) {
+                        return result
+                    }
+                }
+            }
+        }
+
+        return result
+    }
+
+    private fun Iterable<Vec3i>.toBlockJsonArray(): JsonArray {
+        return JsonArray().also { array ->
+            forEach { array.add(it.toJsonObject()) }
+        }
+    }
+
+    private fun Vec3i.toJsonObject(): JsonObject {
+        return JsonObject().apply {
+            addProperty("x", x)
+            addProperty("y", y)
+            addProperty("z", z)
+        }
+    }
+
+    private fun nsToMs(ns: Long): Double {
+        return ns / 1_000_000.0
+    }
+
+    private fun isGoalPenalized(blockPos: BlockPos): Boolean {
+        val penalized = penalizedGoal
+        if (penalized == null || player.tickCount >= penalizedGoalUntilTick) {
+            penalizedGoal = null
+            return false
+        }
+
+        return penalized == blockPos
+    }
+
+    private fun penalizeGoal(blockPos: BlockPos) {
+        penalizedGoal = blockPos
+        penalizedGoalUntilTick = player.tickCount + BAD_GOAL_TICKS
+    }
+
+    private fun clearCombatPath() {
+        cachedCombatPath = null
     }
 
 }

@@ -68,7 +68,7 @@ abstract class NavigationBaseValueGroup<T>(
      * @param event Movement input event to modify
      */
     @Suppress("ComplexCondition")
-    protected open fun handleMovementAssist(event: MovementInputEvent, context: T) {
+    protected open fun handleMovementAssist(event: MovementInputEvent, context: T, goal: Vec3) {
         if ((autoSwim && player.isInWater) || (autoJump && player.horizontalCollision)) {
             event.jump = true
         }
@@ -81,7 +81,7 @@ abstract class NavigationBaseValueGroup<T>(
      * @param goal Target position to move towards
      * @return Calculated directional input
      */
-    private fun calculateDirectionalInput(currentInput: DirectionalInput, goal: Vec3): DirectionalInput {
+    protected open fun calculateDirectionalInput(currentInput: DirectionalInput, goal: Vec3): DirectionalInput {
         val degrees = getDegreesRelativeToView(goal.subtract(player.position()), player.yRot)
         return getDirectionalInputForDegrees(currentInput, degrees, deadAngle = 20.0F)
     }
@@ -112,7 +112,7 @@ abstract class NavigationBaseValueGroup<T>(
         )
 
         event.directionalInput = calculateDirectionalInput(event.directionalInput, goal)
-        handleMovementAssist(event, context)
+        handleMovementAssist(event, context, goal)
     }
 
     @Suppress("unused")
