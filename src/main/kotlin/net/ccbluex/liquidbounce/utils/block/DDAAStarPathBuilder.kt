@@ -12,13 +12,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with LiquidBounce. If not, see <https://www.gnu.org/licenses/>.
  */
 
 package net.ccbluex.liquidbounce.utils.block
 
+import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap
 import net.ccbluex.liquidbounce.utils.client.player
 import net.ccbluex.liquidbounce.utils.client.world
 import net.ccbluex.liquidbounce.utils.entity.getBoundingBoxAt
@@ -35,10 +33,18 @@ import net.minecraft.world.level.block.MagmaBlock
 import net.minecraft.world.level.block.SweetBerryBushBlock
 import net.minecraft.world.level.block.TrapDoorBlock
 import net.minecraft.world.level.block.WitherRoseBlock
+import net.minecraft.world.level.material.Fluids
 import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
 import kotlin.math.abs
 import kotlin.math.sqrt
+
+// Thread-local caches to store results of expensive collision and state checks during a search.
+private val standableCache = ThreadLocal.withInitial { Long2BooleanOpenHashMap() }
+private val climbableCache = ThreadLocal.withInitial { Long2BooleanOpenHashMap() }
+private val bodyPassableCache = ThreadLocal.withInitial { Long2BooleanOpenHashMap() }
+private val floorCache = ThreadLocal.withInitial { Long2BooleanOpenHashMap() }
+private val hazardCache = ThreadLocal.withInitial { Long2BooleanOpenHashMap() }
 
 data class BlockPath(
     val nodes: List<Vec3i>,
@@ -51,122 +57,74 @@ data class BlockPathResult(
     val totalCost: Double,
 )
 
-enum class BlockPathNodeKind {
-    WALK,
-    STEP_UP,
-    DROP_DOWN,
-    CLIMB,
-    PARKOUR_JUMP
-}
-
-data class BlockPathNode(
-    val position: Vec3i,
-    val kind: BlockPathNodeKind,
-)
-
 data class DetailedBlockPath(
     val nodes: List<Vec3i>,
-    val steps: List<BlockPathNode>,
+    val steps: List<BlockPathStep>,
     val totalCost: Double,
 )
 
 data class DetailedBlockPathResult(
     val reachedGoal: Vec3i,
     val nodes: List<Vec3i>,
-    val steps: List<BlockPathNode>,
+    val steps: List<BlockPathStep>,
     val totalCost: Double,
 )
 
+@JvmRecord
 data class DetailedBlockPathSearchResult(
     val path: DetailedBlockPathResult?,
     val stats: PathSearchStats,
-    val bounds: BlockPathSearchBounds?,
+    val bounds: BlockPathSearchBounds?
 )
 
-data class BlockPathSearchBounds(
-    val minX: Int,
-    val maxX: Int,
-    val minY: Int,
-    val maxY: Int,
-    val minZ: Int,
-    val maxZ: Int,
-) {
-    fun contains(position: Vec3i): Boolean {
-        return position.x in minX..maxX &&
-            position.y in minY..maxY &&
-            position.z in minZ..maxZ
-    }
-
-    companion object {
-        fun around(
-            positions: Collection<Vec3i>,
-            horizontalPadding: Int,
-            maxStepUp: Int,
-            maxDropDown: Int,
-        ): BlockPathSearchBounds? {
-            if (positions.isEmpty()) {
-                return null
-            }
-
-            return BlockPathSearchBounds(
-                minX = positions.minOf { it.x } - horizontalPadding,
-                maxX = positions.maxOf { it.x } + horizontalPadding,
-                minY = positions.minOf { it.y } - maxDropDown - 1,
-                maxY = positions.maxOf { it.y } + maxStepUp + 2,
-                minZ = positions.minOf { it.z } - horizontalPadding,
-                maxZ = positions.maxOf { it.z } + horizontalPadding,
-            )
-        }
-    }
+enum class BlockPathStepKind {
+    WALK,
+    CLIMB_UP,
+    CLIMB_DOWN,
+    PARKOUR_JUMP
 }
 
-internal fun classifyBlockPathNodeKind(
-    previous: Vec3i,
-    next: Vec3i,
-    isClimbable: (Vec3i) -> Boolean,
-    isParkourJump: (Vec3i, Vec3i) -> Boolean = { _, _ -> false },
-): BlockPathNodeKind {
-    return when {
-        isClimbable(previous) || isClimbable(next) -> BlockPathNodeKind.CLIMB
-        isParkourJump(previous, next) -> BlockPathNodeKind.PARKOUR_JUMP
-        next.y > previous.y -> BlockPathNodeKind.STEP_UP
-        next.y < previous.y -> BlockPathNodeKind.DROP_DOWN
-        else -> BlockPathNodeKind.WALK
-    }
-}
+@JvmRecord
+data class BlockPathStep(
+    val node: Vec3i,
+    val kind: BlockPathStepKind
+)
 
-internal fun createBlockPathSteps(
+fun createBlockPathSteps(
     start: Vec3i,
     nodes: List<Vec3i>,
     isClimbable: (Vec3i) -> Boolean,
-    isParkourJump: (Vec3i, Vec3i) -> Boolean = { _, _ -> false },
-): List<BlockPathNode> {
-    var previous = start
-
-    return nodes.map { node ->
-        BlockPathNode(
-            position = node,
-            kind = classifyBlockPathNodeKind(previous, node, isClimbable, isParkourJump)
-        ).also {
-            previous = node
-        }
+    isParkourJump: (Vec3i, Vec3i) -> Boolean
+): List<BlockPathStep> {
+    if (nodes.isEmpty()) {
+        return emptyList()
     }
-}
 
-internal fun isConservativeParkourJumpEdge(previous: Vec3i, next: Vec3i, maxStepUp: Int = 1): Boolean {
-    val dx = abs(next.x - previous.x)
-    val dz = abs(next.z - previous.z)
-    val dy = next.y - previous.y
-
-    return dy in 0..maxStepUp && (dx == PARKOUR_JUMP_BLOCK_DISTANCE && dz == 0 ||
-        dx == 0 && dz == PARKOUR_JUMP_BLOCK_DISTANCE)
+    val steps = ArrayList<BlockPathStep>(nodes.size)
+    var current = start
+    for (node in nodes) {
+        val kind = when {
+            isClimbable(node) -> {
+                if (node.y > current.y) {
+                    BlockPathStepKind.CLIMB_UP
+                } else {
+                    BlockPathStepKind.CLIMB_DOWN
+                }
+            }
+            isParkourJump(current, node) -> BlockPathStepKind.PARKOUR_JUMP
+            else -> BlockPathStepKind.WALK
+        }
+        steps.add(BlockPathStep(node, kind))
+        current = node
+    }
+    return steps
 }
 
 private val cardinalDirections = arrayOf(
-    Vec3i(-1, 0, 0), // left
-    Vec3i(1, 0, 0), // right
     Vec3i(0, 0, -1), // front
     Vec3i(0, 0, 1), // back
+    Vec3i(-1, 0, 0), // left
+    Vec3i(1, 0, 0) // right
 )
 
 private val diagonalDirections = arrayOf(
@@ -199,8 +157,8 @@ interface DDAAStarPathBuilder {
         val block = state.block
 
         val fluid = world.getFluidState(pos)
-        if (fluid.`is`(net.minecraft.world.level.material.Fluids.LAVA) ||
-            fluid.`is`(net.minecraft.world.level.material.Fluids.FLOWING_LAVA)
+        if (fluid.`is`(Fluids.LAVA) ||
+            fluid.`is`(Fluids.FLOWING_LAVA)
         ) {
             return true
         }
@@ -216,6 +174,17 @@ interface DDAAStarPathBuilder {
         }
     }
 
+    private fun isHazardousCached(pos: BlockPos): Boolean {
+        val packed = pos.asLong()
+        val cache = hazardCache.get()
+        if (cache.containsKey(packed)) {
+            return cache.get(packed)
+        }
+        val result = isHazardous(pos)
+        cache.put(packed, result)
+        return result
+    }
+
     private fun hasFluid(pos: BlockPos): Boolean {
         return !world.getFluidState(pos).isEmpty
     }
@@ -226,21 +195,43 @@ interface DDAAStarPathBuilder {
         return world.getBlockCollisions(player, box).allEmpty()
     }
 
+    private fun Vec3i.isBodyPassableCached(): Boolean {
+        val packed = BlockPos.asLong(x, y, z)
+        val cache = bodyPassableCache.get()
+        if (cache.containsKey(packed)) {
+            return cache.get(packed)
+        }
+        val result = isBodyPassable()
+        cache.put(packed, result)
+        return result
+    }
+
     private fun Vec3i.hasFloor(): Boolean {
         val floorBox = AABB(x.toDouble(), y - FLOOR_CHECK_DEPTH, z.toDouble(), x + 1.0, y.toDouble(), z + 1.0)
 
         return !world.getBlockCollisions(player, floorBox).allEmpty()
     }
 
+    private fun Vec3i.hasFloorCached(): Boolean {
+        val packed = BlockPos.asLong(x, y, z)
+        val cache = floorCache.get()
+        if (cache.containsKey(packed)) {
+            return cache.get(packed)
+        }
+        val result = hasFloor()
+        cache.put(packed, result)
+        return result
+    }
+
     private fun Vec3i.hasSafeBodyBlocks(checkFloor: Boolean): Boolean {
         val mutablePos = BlockPos.MutableBlockPos()
-        if (isHazardous(mutablePos.set(x, y, z)) ||
-            isHazardous(mutablePos.set(x, y + 1, z))
+        if (isHazardousCached(mutablePos.set(x, y, z)) ||
+            isHazardousCached(mutablePos.set(x, y + 1, z))
         ) {
             return false
         }
 
-        if (checkFloor && isHazardous(mutablePos.set(x, y - 1, z))) {
+        if (checkFloor && isHazardousCached(mutablePos.set(x, y - 1, z))) {
             return false
         }
 
@@ -256,13 +247,31 @@ interface DDAAStarPathBuilder {
     }
 
     private val Vec3i.isStandable: Boolean
-        get() = isBodyPassable() && hasFloor() && hasSafeBodyBlocks(checkFloor = true)
+        get() {
+            val packed = BlockPos.asLong(x, y, z)
+            val cache = standableCache.get()
+            if (cache.containsKey(packed)) {
+                return cache.get(packed)
+            }
+            val result = isBodyPassableCached() && hasFloorCached() && hasSafeBodyBlocks(checkFloor = true)
+            cache.put(packed, result)
+            return result
+        }
 
     private val Vec3i.isClimbableNode: Boolean
-        get() = allowClimbableNavigation &&
-            isClimbableBlock(this) &&
-            isBodyPassable() &&
-            hasSafeBodyBlocks(checkFloor = false)
+        get() {
+            val packed = BlockPos.asLong(x, y, z)
+            val cache = climbableCache.get()
+            if (cache.containsKey(packed)) {
+                return cache.get(packed)
+            }
+            val result = allowClimbableNavigation &&
+                isClimbableBlock(this) &&
+                isBodyPassableCached() &&
+                hasSafeBodyBlocks(checkFloor = false)
+            cache.put(packed, result)
+            return result
+        }
 
     fun isClimbablePathNode(position: Vec3i): Boolean {
         return position.isClimbableNode
@@ -348,6 +357,13 @@ interface DDAAStarPathBuilder {
                     bounds = bounds
                 )
             }
+
+        // Clear thread-local search caches to ensure a fresh context for this search query.
+        standableCache.get().clear()
+        climbableCache.get().clear()
+        bodyPassableCache.get().clear()
+        floorCache.get().clear()
+        hazardCache.get().clear()
 
         val searchResult = aStarShortestPathResult(
             start = start,
@@ -449,7 +465,7 @@ interface DDAAStarPathBuilder {
                 recordParkourEdgeRejected("walkableMidpoint")
                 continue
             }
-            if (!gap.isBodyPassable() || !gap.hasParkourSafeBodyBlocks()) {
+            if (!gap.isBodyPassableCached() || !gap.hasParkourSafeBodyBlocks()) {
                 recordParkourEdgeRejected("transit")
                 continue
             }
@@ -488,8 +504,8 @@ interface DDAAStarPathBuilder {
         for (direction in diagonalDirections) {
             val adjacentPosition = resolveNavigableNeighbor(position, direction, allowClimbable = false, bounds = bounds)
             if (adjacentPosition != null &&
-                pos.set(position.x + direction.x, adjacentPosition.y, position.z).isBodyPassable() &&
-                pos.set(position.x, adjacentPosition.y, position.z + direction.z).isBodyPassable() &&
+                pos.set(position.x + direction.x, adjacentPosition.y, position.z).isBodyPassableCached() &&
+                pos.set(position.x, adjacentPosition.y, position.z + direction.z).isBodyPassableCached() &&
                 isDiagonalStepUpAllowed(position, direction, adjacentPosition, bounds)
             ) {
                 add(WeightedEdge(adjacentPosition, position.walkCostTo(adjacentPosition)))
