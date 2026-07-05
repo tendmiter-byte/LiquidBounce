@@ -52,6 +52,7 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
 
     private const val MILLIS_PER_SECOND = 1000L
     private const val DAMAGE_SOURCE_CORRELATION_TIMEOUT = 1000L
+    private const val STATIC_TARGET_AVAILABILITY_TIMEOUT = 500L
 
     private fun usernameKey(name: String) = name.lowercase()
 
@@ -103,10 +104,6 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
             usernames.any { it.equals(name, ignoreCase = true) }
 
         fun isWhitelist() = filterType == FilterType.WHITELIST
-
-        fun isBlacklist() = filterType == FilterType.BLACKLIST
-
-        fun hasStaticTargets() = usernames.isNotEmpty()
 
         fun addListedUsername(name: String): Boolean {
             if (isListedUsername(name)) {
@@ -270,6 +267,7 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
         private data class AdaptiveTarget(val username: String, val expiresAt: Long)
 
         private var pendingAttacker: PendingAttacker? = null
+        private var lastStaticWhitelistTargetSeen = 0L
         private val damageSamples = mutableMapOf<String, ArrayDeque<DamageSample>>()
         private val temporaryTargets = mutableMapOf<String, AdaptiveTarget>()
 
@@ -427,6 +425,7 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
         private fun clearTransientState() {
             synchronized(this) {
                 pendingAttacker = null
+                lastStaticWhitelistTargetSeen = 0L
                 damageSamples.clear()
             }
         }
@@ -474,12 +473,18 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
         override fun isLockedOn(playerEntity: AbstractClientPlayer): Boolean {
             val name = playerEntity.gameProfile.name
             val isStaticTarget = Filter.isListedUsername(name)
+            val currentTime = System.currentTimeMillis()
 
             if (isStaticTarget) {
-                return Filter.isWhitelist()
+                val isWhitelist = Filter.isWhitelist()
+                if (isWhitelist) {
+                    synchronized(this) {
+                        lastStaticWhitelistTargetSeen = currentTime
+                    }
+                }
+                return isWhitelist
             }
 
-            val currentTime = System.currentTimeMillis()
             val targetKey = usernameKey(name)
             return synchronized(this) {
                 cleanup(currentTime, notifyExpired = false)
@@ -488,7 +493,9 @@ object ModuleTargetLock : ClientModule("TargetLock", ModuleCategories.MISC) {
                     return@synchronized true
                 }
 
-                val hasEligibleTarget = temporaryTargets.isNotEmpty() || Filter.isWhitelist() && Filter.hasStaticTargets()
+                val hasAvailableStaticTarget = Filter.isWhitelist() &&
+                    currentTime - lastStaticWhitelistTargetSeen <= STATIC_TARGET_AVAILABILITY_TIMEOUT
+                val hasEligibleTarget = temporaryTargets.isNotEmpty() || hasAvailableStaticTarget
                 if (hasEligibleTarget) {
                     false
                 } else {
