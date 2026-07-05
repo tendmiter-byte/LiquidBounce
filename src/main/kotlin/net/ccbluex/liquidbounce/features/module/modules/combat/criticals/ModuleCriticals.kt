@@ -217,7 +217,7 @@ object ModuleCriticals : ClientModule("Criticals", ModuleCategories.COMBAT) {
     }
 
     fun canDoCriticalHit(ignoreOnGround: Boolean = false, ignoreSprint: Boolean = false) =
-        allowsCriticalHit(ignoreOnGround) && player.getAttackStrengthScale(0.5f) > 0.848f &&
+        allowsCriticalHit(ignoreOnGround) && player.getAttackStrengthScale(0.5f) > 0.9f &&
             (!player.isSprinting || ignoreSprint)
 
     fun wouldDoCriticalHit(ignoreSprint: Boolean = false) =

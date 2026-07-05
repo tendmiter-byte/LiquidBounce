@@ -25,12 +25,12 @@ import net.minecraft.world.entity.player.Player
 
 open class ItemCooldown : ValueGroup("ItemCooldown", aliases = listOf("Cooldown")) {
 
-    protected val minimumCooldown by floatRange(
+    private val minimumCooldown by floatRange(
         "Minimum",
         1.0f..1.0f, 0.0f..2.0f
     )
 
-    protected var nextCooldown = minimumCooldown.random()
+    private var nextCooldown = minimumCooldown.random()
 
     open fun isCooldownPassed(ticks: Int = 0) = cooldownProgress(ticks) >= nextCooldown
 
@@ -47,7 +47,7 @@ open class ItemCooldown : ValueGroup("ItemCooldown", aliases = listOf("Cooldown"
     /**
      * Generates a new cooldown based on the range that was set by the user.
      */
-    open fun newCooldown() {
+    fun newCooldown() {
         nextCooldown = minimumCooldown.random()
     }
 

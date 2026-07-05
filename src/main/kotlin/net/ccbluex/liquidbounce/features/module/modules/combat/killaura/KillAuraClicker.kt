@@ -36,16 +36,14 @@ import net.ccbluex.liquidbounce.utils.clicking.ItemCooldown
 import net.ccbluex.liquidbounce.utils.client.mc
 import net.ccbluex.liquidbounce.utils.client.network
 import net.ccbluex.liquidbounce.utils.client.player
+import net.ccbluex.liquidbounce.utils.network.send1_11_1OpenInventory
+import net.ccbluex.liquidbounce.utils.network.sendCloseInventory
 import net.ccbluex.liquidbounce.utils.entity.PositionExtrapolation
 import net.ccbluex.liquidbounce.utils.entity.getBoundingBoxAt
 import net.ccbluex.liquidbounce.utils.entity.isBlockingServerside
 import net.ccbluex.liquidbounce.utils.entity.wouldBlockHit
 import net.ccbluex.liquidbounce.utils.inventory.InventoryManager
-import net.ccbluex.liquidbounce.utils.network.send1_11_1OpenInventory
-import net.ccbluex.liquidbounce.utils.network.sendCloseInventory
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.PosRot
-import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.math.round
 
 object KillAuraClicker : Clicker<ModuleKillAura>(
@@ -62,50 +60,6 @@ object KillAuraClicker : Clicker<ModuleKillAura>(
         private val ignoreOnShieldBreak by boolean("IgnoreOnShieldBreak", true)
         private val ignoreOnMaceSmash by boolean("IgnoreOnMaceSmash", true)
         private val ignoreWhenExitingRange by boolean("IgnoreWhenExitingRange", true)
-
-        override fun newCooldown() {
-            val optimal = getOptimalCooldown()
-            if (optimal != null) {
-                nextCooldown = optimal
-            } else {
-                super.newCooldown()
-            }
-        }
-
-        private fun getOptimalCooldown(): Float? {
-            // Only optimize if criticals are enabled and not ignored
-            if (!ModuleKillAura.isCriticalsEnabled) {
-                return null
-            }
-
-            val delay = player.currentItemAttackStrengthDelay.toFloat()
-            if (delay <= 0f) return null
-
-            val minVal = minimumCooldown.start
-            val maxVal = minimumCooldown.endInclusive
-
-            // The minimum ticker value required for a critical hit (where getAttackStrengthScale(0.5f) > 0.848f)
-            // (ticker + 0.5) / delay > 0.848
-            // ticker > 0.848 * delay - 0.5
-            val requiredTickerForCrit = floor(0.848 * delay - 0.5).toInt() + 1
-
-            // The minimum ticker value required to respect the minimumCooldown setting
-            // ticker / delay >= minVal -> ticker >= minVal * delay
-            val requiredTickerForMin = ceil(minVal * delay).toInt()
-
-            // The target ticker is the maximum of the two (we need both crit to be ready and minCooldown to be respected)
-            val targetTicker = Math.max(requiredTickerForCrit, requiredTickerForMin)
-
-            // The cooldown progress at this target ticker
-            val targetProgress = targetTicker.toFloat() / delay
-
-            // We can only use this optimized cooldown if it doesn't exceed the maximumCooldown setting (maxVal)
-            if (targetProgress <= maxVal) {
-                return targetProgress
-            }
-
-            return null
-        }
 
         override fun isCooldownPassed(ticks: Int) = when {
             super.isCooldownPassed(ticks) -> true
