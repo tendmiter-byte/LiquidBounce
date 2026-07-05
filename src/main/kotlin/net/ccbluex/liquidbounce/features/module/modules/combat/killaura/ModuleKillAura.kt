@@ -50,6 +50,8 @@ import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.ModuleAu
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug.debugGeometry
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug.debugParameter
+import net.ccbluex.liquidbounce.render.addBoxFaces
+import net.ccbluex.liquidbounce.render.addBoxOutlines
 import net.ccbluex.liquidbounce.render.addVertex
 import net.ccbluex.liquidbounce.render.drawBox
 import net.ccbluex.liquidbounce.render.drawCustomMesh
@@ -178,38 +180,64 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
                             }
                         }
 
-                        // Draw glowing breadcrumb nodes along the path
-                        path.forEachIndexed { index, node ->
-                            val cycle = Math.sin(time + index * 0.15) * 0.5 + 0.5
-                            val r = (0 * (1 - cycle) + 189 * cycle).toInt()
-                            val g = (255 * (1 - cycle) + 0 * cycle).toInt()
-                            val b = (255 * (1 - cycle) + 255 * cycle).toInt()
+                        // Draw glowing breadcrumb nodes along the path (batch faces)
+                        drawCustomMesh(net.ccbluex.liquidbounce.render.ClientRenderPipelines.Quads) { pose ->
+                            path.forEachIndexed { index, node ->
+                                val cycle = Math.sin(time + index * 0.15) * 0.5 + 0.5
+                                val r = (0 * (1 - cycle) + 189 * cycle).toInt()
+                                val g = (255 * (1 - cycle) + 0 * cycle).toInt()
+                                val b = (255 * (1 - cycle) + 255 * cycle).toInt()
 
-                            // Nodes are small 0.15 block boxes
-                            val size = 0.075
-                            val box = AABB(
-                                node.x + 0.5 - size, node.y + 0.5 - size, node.z + 0.5 - size,
-                                node.x + 0.5 + size, node.y + 0.5 + size, node.z + 0.5 + size
-                            )
+                                val size = 0.075
+                                val isGoal = index == path.lastIndex
+                                val boxSize = if (isGoal) 0.4 else size
 
-                            // Goal/destination is a larger glowing box
-                            val isGoal = index == path.lastIndex
-                            val boxSize = if (isGoal) 0.4 else size
-                            val renderBox = if (isGoal) {
-                                AABB(
-                                    node.x + 0.5 - boxSize, node.y.toDouble(), node.z + 0.5 - boxSize,
-                                    node.x + 0.5 + boxSize, node.y + 1.0, node.z + 0.5 + boxSize
-                                )
-                            } else box
+                                val relativeCenter = relativeToCamera(node)
+                                val renderBox = if (isGoal) {
+                                    AABB(
+                                        relativeCenter.x - boxSize, relativeCenter.y, relativeCenter.z - boxSize,
+                                        relativeCenter.x + boxSize, relativeCenter.y + 1.0, relativeCenter.z + boxSize
+                                    )
+                                } else {
+                                    AABB(
+                                        relativeCenter.x - boxSize, relativeCenter.y - boxSize, relativeCenter.z - boxSize,
+                                        relativeCenter.x + boxSize, relativeCenter.y + boxSize, relativeCenter.z + boxSize
+                                    )
+                                }
 
-                            val faceAlpha = if (isGoal) 40 else 25
-                            val outlineAlpha = if (isGoal) 255 else 120
+                                val faceAlpha = if (isGoal) 40 else 25
+                                addBoxFaces(pose.pose(), renderBox, color = Color4b(r, g, b, faceAlpha))
+                            }
+                        }
 
-                            drawBox(
-                                box = renderBox,
-                                faceColor = Color4b(r, g, b, faceAlpha),
-                                outlineColor = Color4b(r, g, b, outlineAlpha)
-                            )
+                        // Draw glowing breadcrumb nodes along the path (batch outlines)
+                        drawCustomMesh(net.ccbluex.liquidbounce.render.ClientRenderPipelines.Lines) { pose ->
+                            path.forEachIndexed { index, node ->
+                                val cycle = Math.sin(time + index * 0.15) * 0.5 + 0.5
+                                val r = (0 * (1 - cycle) + 189 * cycle).toInt()
+                                val g = (255 * (1 - cycle) + 0 * cycle).toInt()
+                                val b = (255 * (1 - cycle) + 255 * cycle).toInt()
+
+                                val size = 0.075
+                                val isGoal = index == path.lastIndex
+                                val boxSize = if (isGoal) 0.4 else size
+
+                                val relativeCenter = relativeToCamera(node)
+                                val renderBox = if (isGoal) {
+                                    AABB(
+                                        relativeCenter.x - boxSize, relativeCenter.y, relativeCenter.z - boxSize,
+                                        relativeCenter.x + boxSize, relativeCenter.y + 1.0, relativeCenter.z + boxSize
+                                    )
+                                } else {
+                                    AABB(
+                                        relativeCenter.x - boxSize, relativeCenter.y - boxSize, relativeCenter.z - boxSize,
+                                        relativeCenter.x + boxSize, relativeCenter.y + boxSize, relativeCenter.z + boxSize
+                                    )
+                                }
+
+                                val outlineAlpha = if (isGoal) 255 else 120
+                                addBoxOutlines(pose.pose(), renderBox, color = Color4b(r, g, b, outlineAlpha))
+                            }
                         }
                     }
                 }

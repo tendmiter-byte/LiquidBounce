@@ -87,6 +87,7 @@ private data class AttackCandidate(
     val dangerous: Boolean,
     val targetLookDistanceSq: Double,
     val playerDistanceSq: Double,
+    val hasLos: Boolean,
 )
 
 private data class AttackRoute(
@@ -1232,6 +1233,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
             candidates
                 .asSequence()
+                .filter { it.hasLos }
                 .mapNotNull { candidate -> createDirectRoute(context, candidate) }
                 .minWithOrNull(attackRouteComparator())
                 ?.let { return it }
@@ -1310,7 +1312,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         val targetLookPosition = calculateTargetLookPosition(combatTarget)
         val seenBlocks = hashSetOf<BlockPos>()
 
-        val candidates = (-180..180 step ATTACK_POSITION_STEP)
+        val rawCandidates = (-180..180 step ATTACK_POSITION_STEP)
             .mapNotNull { yaw ->
                 val rotation = Rotation(yaw = yaw.toFloat(), pitch = 0.0F)
                 val rawPosition = target.position().fma(attackRadius, rotation.directionVector)
@@ -1329,17 +1331,13 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                     return@mapNotNull null
                 }
 
-                if (!canAttackFrom(position, target)) {
-                    activeDiagnostics?.candidateAttackLosFailures =
-                        activeDiagnostics?.candidateAttackLosFailures?.plus(1) ?: 0
-                    return@mapNotNull null
-                }
+                val hasLos = canAttackFrom(position, target)
 
                 val dangerous = rotation.angleTo(combatTarget.targetRotation) <= dangerousYawDiff
                 ModuleDebug.debugGeometry(
                     this,
                     "Possible Position $yaw",
-                    ModuleDebug.DebuggedPoint(position, if (!dangerous) Color4b.GREEN else Color4b.RED)
+                    ModuleDebug.DebuggedPoint(position, if (hasLos) (if (!dangerous) Color4b.GREEN else Color4b.RED) else Color4b.YELLOW)
                 )
 
                 AttackCandidate(
@@ -1348,8 +1346,22 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                     dangerous = dangerous,
                     targetLookDistanceSq = position.distanceToSqr(targetLookPosition),
                     playerDistanceSq = position.distanceToSqr(context.playerPosition),
+                    hasLos = hasLos,
                 )
             }
+
+        // Prefer candidates that have a line of sight to the target.
+        // If none of the candidates have line of sight (e.g. target is completely behind a wall/cover),
+        // we fall back to using all candidates so we can pathfind to the target's location anyway.
+        val hasAnyLos = rawCandidates.any { it.hasLos }
+        val candidates = if (hasAnyLos) {
+            rawCandidates.filter { it.hasLos }
+        } else {
+            activeDiagnostics?.apply {
+                candidateAttackLosFailures += rawCandidates.size
+            }
+            rawCandidates
+        }
 
         activeDiagnostics?.apply {
             candidateScanNs += System.nanoTime() - diagnosticsStart
