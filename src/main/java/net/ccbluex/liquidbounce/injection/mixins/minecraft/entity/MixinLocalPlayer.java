@@ -67,7 +67,10 @@ import net.minecraft.network.protocol.game.ServerboundSwingPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.component.AttackRange;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec2;
@@ -83,6 +86,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import java.util.function.Predicate;
 
 @Mixin(LocalPlayer.class)
 public abstract class MixinLocalPlayer extends MixinPlayer implements LocalPlayerAddition {
@@ -317,9 +322,40 @@ public abstract class MixinLocalPlayer extends MixinPlayer implements LocalPlaye
         return rotation != null ? rotation.directionVector() : original;
     }
 
-    @ModifyExpressionValue(method = "pick(Lnet/minecraft/world/entity/Entity;DDF)Lnet/minecraft/world/phys/HitResult;", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/projectile/ProjectileUtil;getEntityHitResult(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/AABB;Ljava/util/function/Predicate;D)Lnet/minecraft/world/phys/EntityHitResult;"))
-    private static @Nullable EntityHitResult hookEntityHitResult(@Nullable EntityHitResult original) {
-        return original == null || !ModuleNoEntityInteract.INSTANCE.test(original) ? null : original;
+    @WrapOperation(
+        method = "pick(Lnet/minecraft/world/entity/Entity;DDF)Lnet/minecraft/world/phys/HitResult;",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/world/entity/projectile/ProjectileUtil;getEntityHitResult(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/world/phys/AABB;Ljava/util/function/Predicate;D)Lnet/minecraft/world/phys/EntityHitResult;"
+        )
+    )
+    private static @Nullable EntityHitResult wrapEntityHitResult(
+        Entity camera,
+        Vec3 start,
+        Vec3 end,
+        AABB box,
+        Predicate<? super Entity> predicate,
+        double maxDistanceSqr,
+        Operation<EntityHitResult> original
+    ) {
+        Predicate<? super Entity> customPredicate = entity -> {
+            if (predicate.test(entity)) {
+                if (ModuleReach.INSTANCE.getRunning()) {
+                    double allowedRange = ModuleReach.INSTANCE.getEntity().getInteractionRangeFor(entity);
+                    if (!camera.hasLineOfSight(entity)) {
+                        allowedRange = ModuleReach.INSTANCE.getEntity().getThroughWallsRangeFor(entity);
+                    }
+                    double distanceSqr = camera.distanceToSqr(entity.position());
+                    double hitboxMargin = ModuleReach.INSTANCE.getEntity().adjustAttackRange(AttackRange.defaultFor((Player) camera)).hitboxMargin();
+                    double allowedReachWithMargin = allowedRange + hitboxMargin;
+                    return distanceSqr <= allowedReachWithMargin * allowedReachWithMargin;
+                }
+                return true;
+            }
+            return false;
+        };
+        EntityHitResult result = original.call(camera, start, end, box, customPredicate, maxDistanceSqr);
+        return result == null || !ModuleNoEntityInteract.INSTANCE.test(result) ? null : result;
     }
 
     /**

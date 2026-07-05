@@ -43,6 +43,8 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.phys.EntityHitResult;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -195,8 +197,8 @@ public abstract class MixinPlayer extends MixinLivingEntity {
     private double hookEntityInteractionRange(double original) {
         if (liquid_bounce$isClientPlayer() && ModuleReach.INSTANCE.getRunning()) {
             if (ModuleReach.isCheckingAttackRange) {
-                var mc = net.minecraft.client.Minecraft.getInstance();
-                if (mc.hitResult instanceof net.minecraft.world.phys.EntityHitResult entityHitResult) {
+                var mc = Minecraft.getInstance();
+                if (mc.hitResult instanceof EntityHitResult entityHitResult) {
                     var target = entityHitResult.getEntity();
                     if (target != null) {
                         if (!((Player) (Object) this).hasLineOfSight(target)) {

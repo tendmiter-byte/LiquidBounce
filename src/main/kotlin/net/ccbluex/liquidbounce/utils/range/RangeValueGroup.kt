@@ -102,14 +102,14 @@ open class RangeValueGroup(
     }
 
     internal var comboHits by int(
-        "ComboHits",
+        "RequiredComboCountForActuation",
         1,
         1..10,
         "hits"
     )
 
     internal var maxExtendedHits by int(
-        "MaxExtendedHits",
+        "MaxExtendedComboUntilReset",
         0,
         0..10,
         "hits"
@@ -120,14 +120,14 @@ open class RangeValueGroup(
      * When 0, the full [maxRangeIncrease] is granted immediately upon unlocking.
      */
     internal var rangePerHit by float(
-        "RangePerHit",
+        "RangeIncreasePerHit",
         0.0f,
         0.0f..5f,
         "blocks"
     )
 
     internal var reachResetDelay by int(
-        "ReachResetDelay",
+        "ExtendedReachResetDelay",
         1000,
         0..2000,
         "ms"
