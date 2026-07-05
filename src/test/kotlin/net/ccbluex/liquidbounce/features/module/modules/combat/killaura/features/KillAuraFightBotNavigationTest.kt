@@ -23,6 +23,7 @@ import net.ccbluex.liquidbounce.utils.block.BlockPathNodeKind
 import net.ccbluex.liquidbounce.utils.block.createBlockPathSteps
 import net.ccbluex.liquidbounce.utils.movement.DirectionalInput
 import net.minecraft.core.BlockPos
+import net.minecraft.world.phys.Vec3
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertIterableEquals
@@ -87,6 +88,23 @@ class KillAuraFightBotNavigationTest {
     }
 
     @Test
+    fun `parkour waypoint segment is not skippable`() {
+        val steps = listOf(
+            BlockPathNode(BlockPos(0, 0, 0), BlockPathNodeKind.WALK),
+            BlockPathNode(BlockPos(2, 0, 0), BlockPathNodeKind.PARKOUR_JUMP),
+            BlockPathNode(BlockPos(3, 0, 0), BlockPathNodeKind.WALK),
+        )
+
+        assertTrue(
+            containsRequiredFightBotWaypoint(
+                steps = steps,
+                fromIndex = 0,
+                toIndex = 2,
+            )
+        )
+    }
+
+    @Test
     fun `flat waypoint segment remains skippable`() {
         val steps = listOf(
             BlockPathNode(BlockPos(0, 0, 0), BlockPathNodeKind.WALK),
@@ -114,7 +132,7 @@ class KillAuraFightBotNavigationTest {
             BlockPos(19, -56, -10),
         )
 
-        val steps = createBlockPathSteps(start, nodes) { false }
+        val steps = createBlockPathSteps(start, nodes, isClimbable = { false })
 
         assertIterableEquals(
             listOf(
@@ -127,6 +145,21 @@ class KillAuraFightBotNavigationTest {
             steps.map { it.kind }
         )
         assertTrue(containsRequiredFightBotWaypoint(steps, 0, steps.lastIndex))
+    }
+
+    @Test
+    fun `one missing block gap classifies as parkour jump when validated by path builder`() {
+        val start = BlockPos(0, 0, 0)
+        val nodes = listOf(BlockPos(2, 1, 0))
+
+        val steps = createBlockPathSteps(
+            start = start,
+            nodes = nodes,
+            isClimbable = { false },
+            isParkourJump = { previous, next -> previous == start && next == nodes.single() },
+        )
+
+        assertEquals(BlockPathNodeKind.PARKOUR_JUMP, steps.single().kind)
     }
 
     @Test
@@ -213,6 +246,157 @@ class KillAuraFightBotNavigationTest {
     }
 
     @Test
+    fun `parkour jump is requested only from grounded launch edge`() {
+        val launch = BlockPos(1, 0, 0)
+        val landing = BlockPos(3, 0, 0)
+        val launchPoint = fightBotParkourLaunchPoint(launch, landing)!!
+
+        assertTrue(
+            shouldJumpForFightBotParkourWaypoint(
+                launchBlock = launch,
+                landingBlock = landing,
+                launchPoint = launchPoint,
+                playerBlock = launch,
+                playerPosition = launchPoint,
+                onGround = true,
+                isParkourWaypoint = true,
+                airTicks = 0,
+                jumpTicks = 0,
+            )
+        )
+
+        assertFalse(
+            shouldJumpForFightBotParkourWaypoint(
+                launchBlock = launch,
+                landingBlock = landing,
+                launchPoint = launchPoint,
+                playerBlock = launch,
+                playerPosition = Vec3(1.5, 0.0, 0.5),
+                onGround = true,
+                isParkourWaypoint = true,
+                airTicks = 0,
+                jumpTicks = 0,
+            )
+        )
+        assertFalse(
+            shouldJumpForFightBotParkourWaypoint(
+                launchBlock = launch,
+                landingBlock = landing,
+                launchPoint = launchPoint,
+                playerBlock = BlockPos(0, 0, 0),
+                playerPosition = Vec3(0.5, 0.0, 0.5),
+                onGround = true,
+                isParkourWaypoint = true,
+                airTicks = 0,
+                jumpTicks = 0,
+            )
+        )
+        assertFalse(
+            shouldJumpForFightBotParkourWaypoint(
+                launchBlock = launch,
+                landingBlock = landing,
+                launchPoint = launchPoint,
+                playerBlock = launch,
+                playerPosition = launchPoint,
+                onGround = false,
+                isParkourWaypoint = true,
+                airTicks = 1,
+                jumpTicks = 0,
+            )
+        )
+    }
+
+    @Test
+    fun `parkour jump hold is bounded after launch starts`() {
+        val launch = BlockPos(1, 0, 0)
+        val landing = BlockPos(3, 0, 0)
+        val launchPoint = fightBotParkourLaunchPoint(launch, landing)!!
+
+        assertTrue(
+            shouldJumpForFightBotParkourWaypoint(
+                launchBlock = launch,
+                landingBlock = landing,
+                launchPoint = launchPoint,
+                playerBlock = launch,
+                playerPosition = launchPoint,
+                onGround = false,
+                isParkourWaypoint = true,
+                airTicks = 1,
+                jumpTicks = 1,
+            )
+        )
+
+        assertFalse(
+            shouldJumpForFightBotParkourWaypoint(
+                launchBlock = launch,
+                landingBlock = landing,
+                launchPoint = launchPoint,
+                playerBlock = launch,
+                playerPosition = launchPoint,
+                onGround = false,
+                isParkourWaypoint = true,
+                airTicks = 4,
+                jumpTicks = 5,
+            )
+        )
+    }
+
+    @Test
+    fun `parkour waypoint advances only after expected landing`() {
+        val landing = BlockPos(2, 1, 0)
+
+        assertFalse(
+            hasLandedFightBotParkourWaypoint(
+                landingBlock = landing,
+                playerBlock = BlockPos(2, 0, 0),
+                onGround = true,
+                waypointKind = BlockPathNodeKind.PARKOUR_JUMP,
+            )
+        )
+        assertFalse(
+            hasLandedFightBotParkourWaypoint(
+                landingBlock = landing,
+                playerBlock = landing,
+                onGround = false,
+                waypointKind = BlockPathNodeKind.PARKOUR_JUMP,
+            )
+        )
+        assertTrue(
+            hasLandedFightBotParkourWaypoint(
+                landingBlock = landing,
+                playerBlock = landing,
+                onGround = true,
+                waypointKind = BlockPathNodeKind.PARKOUR_JUMP,
+            )
+        )
+    }
+
+    @Test
+    fun `parkour airborne ticks suppress normal stuck handling briefly`() {
+        assertTrue(
+            shouldSuppressFightBotParkourStuck(
+                waypointKind = BlockPathNodeKind.PARKOUR_JUMP,
+                onGround = false,
+                airTicks = 8,
+            )
+        )
+        assertFalse(
+            shouldSuppressFightBotParkourStuck(
+                waypointKind = BlockPathNodeKind.PARKOUR_JUMP,
+                onGround = true,
+                airTicks = 8,
+            )
+        )
+        assertFalse(
+            shouldSuppressFightBotParkourStuck(
+                waypointKind = BlockPathNodeKind.STEP_UP,
+                onGround = false,
+                airTicks = 8,
+            )
+        )
+    }
+
+    @Test
     fun `climb ascent clears horizontal input when attached`() {
         val input = climbDirectionalInputForFightBotWaypoint(
             waypointY = 3.0,
@@ -296,20 +480,46 @@ class KillAuraFightBotNavigationTest {
             targetId = 1,
             targetBlock = targetBlock,
             playerBlock = playerBlock,
+            parkourEnabled = false,
+            parkourSprintAllowed = false,
             currentTick = 100,
         )
         assertEquals(1, first.failures)
         assertEquals(140, first.retryTick)
 
-        val second = nextFightBotUnreachableRoute(first, 1, targetBlock, playerBlock, currentTick = 140)
+        val second = nextFightBotUnreachableRoute(
+            first,
+            1,
+            targetBlock,
+            playerBlock,
+            parkourEnabled = false,
+            parkourSprintAllowed = false,
+            currentTick = 140
+        )
         assertEquals(2, second.failures)
         assertEquals(220, second.retryTick)
 
-        val third = nextFightBotUnreachableRoute(second, 1, targetBlock, playerBlock, currentTick = 220)
+        val third = nextFightBotUnreachableRoute(
+            second,
+            1,
+            targetBlock,
+            playerBlock,
+            parkourEnabled = false,
+            parkourSprintAllowed = false,
+            currentTick = 220
+        )
         assertEquals(3, third.failures)
         assertEquals(380, third.retryTick)
 
-        val fourth = nextFightBotUnreachableRoute(third, 1, targetBlock, playerBlock, currentTick = 380)
+        val fourth = nextFightBotUnreachableRoute(
+            third,
+            1,
+            targetBlock,
+            playerBlock,
+            parkourEnabled = false,
+            parkourSprintAllowed = false,
+            currentTick = 380
+        )
         assertEquals(4, fourth.failures)
         assertEquals(540, fourth.retryTick)
     }
@@ -323,6 +533,8 @@ class KillAuraFightBotNavigationTest {
             targetBlock = targetBlock,
             playerYBand = fightBotUnreachableYBand(playerBlock),
             originBlock = playerBlock,
+            parkourEnabled = false,
+            parkourSprintAllowed = false,
             failures = 2,
             retryTick = 220,
         )
@@ -333,6 +545,8 @@ class KillAuraFightBotNavigationTest {
                 targetId = 1,
                 targetBlock = targetBlock,
                 playerBlock = playerBlock,
+                parkourEnabled = false,
+                parkourSprintAllowed = false,
                 currentTick = 219,
             )
         )
@@ -342,6 +556,8 @@ class KillAuraFightBotNavigationTest {
                 targetId = 1,
                 targetBlock = targetBlock,
                 playerBlock = playerBlock,
+                parkourEnabled = false,
+                parkourSprintAllowed = false,
                 currentTick = 220,
             )
         )
@@ -356,13 +572,71 @@ class KillAuraFightBotNavigationTest {
             targetBlock = targetBlock,
             playerYBand = fightBotUnreachableYBand(playerBlock),
             originBlock = playerBlock,
+            parkourEnabled = false,
+            parkourSprintAllowed = false,
             failures = 1,
             retryTick = 140,
         )
 
-        assertFalse(shouldInvalidateFightBotUnreachableRoute(route, 1, targetBlock, BlockPos(28, -60, -10)))
-        assertTrue(shouldInvalidateFightBotUnreachableRoute(route, 1, BlockPos(20, -55, -15), playerBlock))
-        assertTrue(shouldInvalidateFightBotUnreachableRoute(route, 1, targetBlock, BlockPos(26, -56, -13)))
-        assertTrue(shouldInvalidateFightBotUnreachableRoute(route, 1, targetBlock, BlockPos(40, -60, -13)))
+        assertFalse(
+            shouldInvalidateFightBotUnreachableRoute(
+                route,
+                1,
+                targetBlock,
+                BlockPos(28, -60, -10),
+                parkourEnabled = false,
+                parkourSprintAllowed = false
+            )
+        )
+        assertTrue(
+            shouldInvalidateFightBotUnreachableRoute(
+                route,
+                1,
+                BlockPos(20, -55, -15),
+                playerBlock,
+                parkourEnabled = false,
+                parkourSprintAllowed = false
+            )
+        )
+        assertTrue(
+            shouldInvalidateFightBotUnreachableRoute(
+                route,
+                1,
+                targetBlock,
+                BlockPos(26, -56, -13),
+                parkourEnabled = false,
+                parkourSprintAllowed = false
+            )
+        )
+        assertTrue(
+            shouldInvalidateFightBotUnreachableRoute(
+                route,
+                1,
+                targetBlock,
+                BlockPos(40, -60, -13),
+                parkourEnabled = false,
+                parkourSprintAllowed = false
+            )
+        )
+        assertTrue(
+            shouldInvalidateFightBotUnreachableRoute(
+                route,
+                1,
+                targetBlock,
+                playerBlock,
+                parkourEnabled = true,
+                parkourSprintAllowed = false
+            )
+        )
+        assertTrue(
+            shouldInvalidateFightBotUnreachableRoute(
+                route,
+                1,
+                targetBlock,
+                playerBlock,
+                parkourEnabled = false,
+                parkourSprintAllowed = true
+            )
+        )
     }
 }

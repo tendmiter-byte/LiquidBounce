@@ -37,6 +37,7 @@ import net.minecraft.world.level.block.TrapDoorBlock
 import net.minecraft.world.level.block.WitherRoseBlock
 import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 data class BlockPath(
@@ -54,7 +55,8 @@ enum class BlockPathNodeKind {
     WALK,
     STEP_UP,
     DROP_DOWN,
-    CLIMB
+    CLIMB,
+    PARKOUR_JUMP
 }
 
 data class BlockPathNode(
@@ -79,9 +81,11 @@ internal fun classifyBlockPathNodeKind(
     previous: Vec3i,
     next: Vec3i,
     isClimbable: (Vec3i) -> Boolean,
+    isParkourJump: (Vec3i, Vec3i) -> Boolean = { _, _ -> false },
 ): BlockPathNodeKind {
     return when {
         isClimbable(previous) || isClimbable(next) -> BlockPathNodeKind.CLIMB
+        isParkourJump(previous, next) -> BlockPathNodeKind.PARKOUR_JUMP
         next.y > previous.y -> BlockPathNodeKind.STEP_UP
         next.y < previous.y -> BlockPathNodeKind.DROP_DOWN
         else -> BlockPathNodeKind.WALK
@@ -92,17 +96,27 @@ internal fun createBlockPathSteps(
     start: Vec3i,
     nodes: List<Vec3i>,
     isClimbable: (Vec3i) -> Boolean,
+    isParkourJump: (Vec3i, Vec3i) -> Boolean = { _, _ -> false },
 ): List<BlockPathNode> {
     var previous = start
 
     return nodes.map { node ->
         BlockPathNode(
             position = node,
-            kind = classifyBlockPathNodeKind(previous, node, isClimbable)
+            kind = classifyBlockPathNodeKind(previous, node, isClimbable, isParkourJump)
         ).also {
             previous = node
         }
     }
+}
+
+internal fun isConservativeParkourJumpEdge(previous: Vec3i, next: Vec3i, maxStepUp: Int = 1): Boolean {
+    val dx = abs(next.x - previous.x)
+    val dz = abs(next.z - previous.z)
+    val dy = next.y - previous.y
+
+    return dy in 0..maxStepUp && (dx == PARKOUR_JUMP_BLOCK_DISTANCE && dz == 0 ||
+        dx == 0 && dz == PARKOUR_JUMP_BLOCK_DISTANCE)
 }
 
 private val cardinalDirections = arrayOf(
@@ -124,6 +138,10 @@ interface AStarPathBuilder {
     val allowDiagonal: Boolean
 
     val allowClimbableNavigation: Boolean get() = false
+
+    val allowParkourNavigation: Boolean get() = false
+
+    val allowParkourSprint: Boolean get() = false
 
     val maxIterations: Int get() = 500
 
@@ -155,6 +173,10 @@ interface AStarPathBuilder {
         }
     }
 
+    private fun hasFluid(pos: BlockPos): Boolean {
+        return !world.getFluidState(pos).isEmpty
+    }
+
     private fun Vec3i.isBodyPassable(): Boolean {
         val box = player.getBoundingBoxAt(Vec3(x + 0.5, y.toDouble(), z + 0.5))
 
@@ -180,6 +202,14 @@ interface AStarPathBuilder {
         }
 
         return true
+    }
+
+    private fun Vec3i.hasParkourSafeBodyBlocks(): Boolean {
+        val mutablePos = BlockPos.MutableBlockPos()
+        return hasSafeBodyBlocks(checkFloor = true) &&
+            !hasFluid(mutablePos.set(x, y, z)) &&
+            !hasFluid(mutablePos.set(x, y + 1, z)) &&
+            !hasFluid(mutablePos.set(x, y - 1, z))
     }
 
     private val Vec3i.isStandable: Boolean
@@ -211,6 +241,14 @@ interface AStarPathBuilder {
         return belowState.`is`(Blocks.LADDER) &&
             belowState.getValue(LadderBlock.FACING) == state.getValue(TrapDoorBlock.FACING)
     }
+
+    fun recordParkourEdgeCandidate(start: Vec3i, landing: Vec3i) {}
+
+    fun recordParkourEdgeAccepted(start: Vec3i, landing: Vec3i) {}
+
+    fun recordParkourEdgeRejected(reason: String) {}
+
+    fun getParkourEdgeExtraCost(start: Vec3i, landing: Vec3i): Double = 0.0
 
     fun findPath(start: Vec3i, end: Vec3i, maxCost: Int): List<Vec3i> {
         return findPathResult(start, end, maxCost)?.nodes ?: emptyList()
@@ -265,7 +303,7 @@ interface AStarPathBuilder {
         return DetailedBlockPathResult(
             reachedGoal = reachedGoal,
             nodes = nodes,
-            steps = createBlockPathSteps(start, nodes, ::isClimbablePathNode),
+            steps = createBlockPathSteps(start, nodes, ::isClimbablePathNode, ::isParkourJumpEdge),
             totalCost = shortestPath.totalCost
         )
     }
@@ -273,6 +311,7 @@ interface AStarPathBuilder {
     private fun getAdjacentEdges(position: Vec3i): List<WeightedEdge<Vec3i>> = buildList {
         getAdjacentNodesDirect(position)
         getAdjacentNodesClimbable(position)
+        getAdjacentNodesParkour(position)
         if (allowDiagonal) {
             getAdjacentNodesDiagonal(position)
         }
@@ -300,6 +339,45 @@ interface AStarPathBuilder {
         val below = BlockPos(position.x, position.y - 1, position.z)
         if (below.isClimbableNode || below.isStandable) {
             add(WeightedEdge(below, CLIMB_DOWN_COST))
+        }
+    }
+
+    private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesParkour(position: Vec3i) {
+        if (!allowParkourNavigation || !position.isStandable || !position.hasParkourSafeBodyBlocks()) {
+            return
+        }
+
+        for (direction in cardinalDirections) {
+            val gap = BlockPos(
+                position.x + direction.x,
+                position.y,
+                position.z + direction.z
+            )
+            if (!gap.isBodyPassable() || !gap.hasParkourSafeBodyBlocks()) {
+                recordParkourEdgeRejected("transit")
+                continue
+            }
+
+            for (offsetY in 0..maxStepUp) {
+                val landing = BlockPos(
+                    position.x + direction.x * PARKOUR_JUMP_BLOCK_DISTANCE,
+                    position.y + offsetY,
+                    position.z + direction.z * PARKOUR_JUMP_BLOCK_DISTANCE
+                )
+                if (!landing.isStandable || !landing.hasParkourSafeBodyBlocks()) {
+                    recordParkourEdgeRejected("landing")
+                    continue
+                }
+
+                recordParkourEdgeCandidate(position, landing)
+                recordParkourEdgeAccepted(position, landing)
+                add(
+                    WeightedEdge(
+                        landing,
+                        position.parkourCostTo(landing) + getParkourEdgeExtraCost(position, landing)
+                    )
+                )
+            }
         }
     }
 
@@ -350,6 +428,10 @@ interface AStarPathBuilder {
         return xAdjacent?.y == adjacentPosition.y && zAdjacent?.y == adjacentPosition.y
     }
 
+    private fun isParkourJumpEdge(previous: Vec3i, next: Vec3i): Boolean {
+        return allowParkourNavigation && isConservativeParkourJumpEdge(previous, next, maxStepUp)
+    }
+
     private fun Vec3i.walkCostTo(other: Vec3i): Double {
         val verticalPenalty = when {
             other.y > y -> STEP_UP_COST
@@ -360,11 +442,18 @@ interface AStarPathBuilder {
         return sqrt(distSqr(other)) + verticalPenalty
     }
 
+    private fun Vec3i.parkourCostTo(other: Vec3i): Double {
+        return walkCostTo(other) + PARKOUR_JUMP_COST
+    }
+
     companion object {
         private const val FLOOR_CHECK_DEPTH = 0.125
         private const val STEP_UP_COST = 0.5
         private const val DROP_DOWN_COST = 0.2
         private const val CLIMB_UP_COST = 1.2
         private const val CLIMB_DOWN_COST = 1.0
+        private const val PARKOUR_JUMP_COST = 8.0
     }
 }
+
+private const val PARKOUR_JUMP_BLOCK_DISTANCE = 2

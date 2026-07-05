@@ -50,6 +50,8 @@ abstract class NavigationBaseValueGroup<T>(
     private inline val autoSwim get() = AutoAction.SWIM in autoAction
     private inline val autoSprint get() = AutoAction.SPRINT in autoAction
 
+    protected val autoSprintEnabled get() = autoSprint
+
     /**
      * Creates context for navigation
      */

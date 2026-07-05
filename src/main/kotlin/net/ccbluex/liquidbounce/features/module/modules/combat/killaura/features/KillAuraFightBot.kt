@@ -35,6 +35,7 @@ import net.ccbluex.liquidbounce.utils.block.BlockPathNode
 import net.ccbluex.liquidbounce.utils.block.BlockPathNodeKind
 import net.ccbluex.liquidbounce.utils.block.DetailedBlockPath
 import net.ccbluex.liquidbounce.utils.block.DetailedBlockPathResult
+import net.ccbluex.liquidbounce.utils.block.isConservativeParkourJumpEdge
 import net.ccbluex.liquidbounce.utils.client.logger
 import net.ccbluex.liquidbounce.utils.entity.doesCollideAt
 import net.ccbluex.liquidbounce.utils.entity.doesNotCollideBelow
@@ -95,6 +96,7 @@ private data class AttackRoute(
 private data class CachedCombatPath(
     val targetId: Int,
     val targetBlock: BlockPos,
+    val startBlock: BlockPos,
     val goalBlock: BlockPos,
     val destination: Vec3,
     val nodes: List<Vec3i>,
@@ -111,9 +113,30 @@ internal data class FightBotUnreachableRoute(
     val targetBlock: BlockPos,
     val playerYBand: Int,
     val originBlock: BlockPos,
+    val parkourEnabled: Boolean,
+    val parkourSprintAllowed: Boolean,
     val failures: Int,
     val retryTick: Int,
 )
+
+private data class FightBotParkourEdge(
+    val launchBlock: BlockPos,
+    val landingBlock: BlockPos,
+)
+
+private data class FightBotPenalizedParkourEdge(
+    val edge: FightBotParkourEdge,
+    val untilTick: Int,
+)
+
+private enum class FightBotParkourPhase {
+    NONE,
+    APPROACH,
+    JUMP,
+    AIRBORNE,
+    LANDED,
+    MISSED
+}
 
 private class FightBotDiagnosticsTrace(
     val startedNs: Long = System.nanoTime(),
@@ -143,18 +166,37 @@ private class FightBotDiagnosticsTrace(
     var unreachableCooldownTicks = 0
     var unreachableFailures = 0
     var pathGoalCount = 0
+    var pathMaxCost = PATH_MAX_COST
     var pathSearchMode = "none"
+    var parkourEnabled = false
+    var parkourSprintAllowed = false
+    var parkourEdgeCandidates = 0
+    var parkourEdgeAccepted = 0
+    var parkourTransitRejected = 0
+    var parkourLandingRejected = 0
+    var parkourSimulationRejected = 0
     var stuck = false
     var activeWaypointClimbable = false
     var activeWaypointKind = BlockPathNodeKind.WALK
     var selectedStepUpPathNodes = 0
+    var selectedParkourPathNodes = 0
     var stepUpJumpTicks = 0
     var stepUpStuck = false
+    var parkourAirTicks = 0
+    var parkourValidated = false
+    var parkourMiss = false
+    var parkourPhase = FightBotParkourPhase.NONE
+    var parkourLaunchPoint: Vec3? = null
+    var parkourJumpReady = false
+    var parkourPenaltyActive = false
     var selectedGoalBlock: BlockPos? = null
     var activeWaypoint: Vec3? = null
+    var parkourLaunchBlock: Vec3i? = null
+    var parkourLandingBlock: Vec3i? = null
     val acceptedCandidateBlocks = mutableListOf<BlockPos>()
     val climbablePathNodeBlocks = mutableListOf<Vec3i>()
     val stepUpPathNodeBlocks = mutableListOf<Vec3i>()
+    val parkourPathNodeBlocks = mutableListOf<Vec3i>()
     val pathStepKinds = mutableListOf<BlockPathNodeKind>()
 }
 
@@ -216,7 +258,9 @@ internal fun containsRequiredFightBotWaypoint(
     }
 
     return (start..end).any { index ->
-        steps[index].kind == BlockPathNodeKind.CLIMB || steps[index].kind == BlockPathNodeKind.STEP_UP
+        steps[index].kind == BlockPathNodeKind.CLIMB ||
+            steps[index].kind == BlockPathNodeKind.STEP_UP ||
+            steps[index].kind == BlockPathNodeKind.PARKOUR_JUMP
     }
 }
 
@@ -251,6 +295,70 @@ internal fun hasFightBotStepUpVerticalProgress(playerY: Double, bestWaypointY: D
     return playerY > bestWaypointY + STEP_UP_PROGRESS_EPSILON
 }
 
+internal fun fightBotParkourLaunchPoint(launchBlock: Vec3i, landingBlock: Vec3i): Vec3? {
+    if (!isConservativeParkourJumpEdge(launchBlock, landingBlock)) {
+        return null
+    }
+
+    val directionX = (landingBlock.x - launchBlock.x).directionSign()
+    val directionZ = (landingBlock.z - launchBlock.z).directionSign()
+
+    return launchBlock.bottomCenter.add(
+        directionX * PARKOUR_LAUNCH_EDGE_OFFSET,
+        0.0,
+        directionZ * PARKOUR_LAUNCH_EDGE_OFFSET
+    )
+}
+
+internal fun shouldJumpForFightBotParkourWaypoint(
+    launchBlock: Vec3i?,
+    landingBlock: Vec3i?,
+    launchPoint: Vec3?,
+    playerBlock: Vec3i,
+    playerPosition: Vec3,
+    onGround: Boolean,
+    isParkourWaypoint: Boolean,
+    airTicks: Int,
+    jumpTicks: Int,
+): Boolean {
+    if (!isParkourWaypoint ||
+        launchBlock == null ||
+        landingBlock == null ||
+        launchPoint == null
+    ) {
+        return false
+    }
+
+    if (jumpTicks in 1 until PARKOUR_JUMP_HOLD_TICKS) {
+        return true
+    }
+
+    if (!onGround || airTicks != 0 || launchBlock != playerBlock) {
+        return false
+    }
+
+    return playerPosition.horizontalDistanceSq(launchPoint) <= PARKOUR_LAUNCH_POINT_REACHED_DISTANCE_SQ
+}
+
+internal fun hasLandedFightBotParkourWaypoint(
+    landingBlock: Vec3i,
+    playerBlock: Vec3i,
+    onGround: Boolean,
+    waypointKind: BlockPathNodeKind,
+): Boolean {
+    return waypointKind != BlockPathNodeKind.PARKOUR_JUMP || onGround && landingBlock == playerBlock
+}
+
+internal fun shouldSuppressFightBotParkourStuck(
+    waypointKind: BlockPathNodeKind,
+    onGround: Boolean,
+    airTicks: Int,
+): Boolean {
+    return waypointKind == BlockPathNodeKind.PARKOUR_JUMP &&
+        !onGround &&
+        airTicks in 1..PARKOUR_MAX_AIR_TICKS
+}
+
 internal fun fightBotUnreachableCooldownTicks(failures: Int): Int {
     return when {
         failures <= 1 -> UNREACHABLE_FIRST_COOLDOWN_TICKS
@@ -268,9 +376,13 @@ internal fun shouldInvalidateFightBotUnreachableRoute(
     targetId: Int,
     targetBlock: BlockPos,
     playerBlock: BlockPos,
+    parkourEnabled: Boolean,
+    parkourSprintAllowed: Boolean,
 ): Boolean {
     return route.targetId != targetId ||
         route.targetBlock != targetBlock ||
+        route.parkourEnabled != parkourEnabled ||
+        route.parkourSprintAllowed != parkourSprintAllowed ||
         route.playerYBand != fightBotUnreachableYBand(playerBlock) ||
         route.originBlock.horizontalBlockDistanceSq(playerBlock) > UNREACHABLE_ORIGIN_RETRY_DISTANCE_SQ
 }
@@ -280,9 +392,19 @@ internal fun isFightBotUnreachableRouteCoolingDown(
     targetId: Int,
     targetBlock: BlockPos,
     playerBlock: BlockPos,
+    parkourEnabled: Boolean,
+    parkourSprintAllowed: Boolean,
     currentTick: Int,
 ): Boolean {
-    if (shouldInvalidateFightBotUnreachableRoute(route, targetId, targetBlock, playerBlock)) {
+    if (shouldInvalidateFightBotUnreachableRoute(
+            route,
+            targetId,
+            targetBlock,
+            playerBlock,
+            parkourEnabled,
+            parkourSprintAllowed
+        )
+    ) {
         return false
     }
 
@@ -294,10 +416,19 @@ internal fun nextFightBotUnreachableRoute(
     targetId: Int,
     targetBlock: BlockPos,
     playerBlock: BlockPos,
+    parkourEnabled: Boolean,
+    parkourSprintAllowed: Boolean,
     currentTick: Int,
 ): FightBotUnreachableRoute {
     val canReusePrevious = previous != null &&
-        !shouldInvalidateFightBotUnreachableRoute(previous, targetId, targetBlock, playerBlock)
+        !shouldInvalidateFightBotUnreachableRoute(
+            previous,
+            targetId,
+            targetBlock,
+            playerBlock,
+            parkourEnabled,
+            parkourSprintAllowed
+        )
     val failures = if (canReusePrevious) previous.failures + 1 else 1
     val originBlock = if (canReusePrevious) previous.originBlock else playerBlock
     val cooldownTicks = fightBotUnreachableCooldownTicks(failures)
@@ -307,6 +438,8 @@ internal fun nextFightBotUnreachableRoute(
         targetBlock = targetBlock,
         playerYBand = fightBotUnreachableYBand(playerBlock),
         originBlock = originBlock,
+        parkourEnabled = parkourEnabled,
+        parkourSprintAllowed = parkourSprintAllowed,
         failures = failures,
         retryTick = currentTick + cooldownTicks,
     )
@@ -318,14 +451,30 @@ private fun Vec3i.horizontalBlockDistanceSq(other: Vec3i): Int {
     return x * x + z * z
 }
 
+private fun Vec3i.blockDistanceSq(other: Vec3i): Int {
+    val x = this.x - other.x
+    val y = this.y - other.y
+    val z = this.z - other.z
+    return x * x + y * y + z * z
+}
+
 private fun Vec3.horizontalDistanceSq(other: Vec3): Double {
     val x = this.x - other.x
     val z = this.z - other.z
     return x * x + z * z
 }
 
+private fun Int.directionSign(): Int {
+    return when {
+        this > 0 -> 1
+        this < 0 -> -1
+        else -> 0
+    }
+}
+
 private const val PATH_CACHE_TICKS = 40
 private const val PATH_MAX_COST = 40
+private const val PARKOUR_PATH_MAX_COST = 90
 private const val MAX_PATHED_ATTACK_CANDIDATES = 8
 private const val WAYPOINT_REACHED_DISTANCE_SQ = 0.55 * 0.55
 private const val CLIMB_ASCEND_EPSILON = 0.1
@@ -337,10 +486,19 @@ private const val STEP_UP_JUMP_HOLD_TICKS = 5
 private const val STEP_UP_JUMP_START_DISTANCE = 1.65
 private const val STEP_UP_JUMP_START_DISTANCE_SQ =
     STEP_UP_JUMP_START_DISTANCE * STEP_UP_JUMP_START_DISTANCE
+private const val PARKOUR_MAX_AIR_TICKS = 24
+private const val PARKOUR_JUMP_HOLD_TICKS = 5
+private const val PARKOUR_LAUNCH_EDGE_OFFSET = 0.42
+private const val PARKOUR_LAUNCH_POINT_REACHED_DISTANCE = 0.32
+private const val PARKOUR_LAUNCH_POINT_REACHED_DISTANCE_SQ =
+    PARKOUR_LAUNCH_POINT_REACHED_DISTANCE * PARKOUR_LAUNCH_POINT_REACHED_DISTANCE
 private const val STUCK_TICKS = 8
 private const val STUCK_PROGRESS_EPSILON_SQ = 0.04
 private const val BAD_GOAL_TICKS = 25
 private const val BAD_GOAL_COST = 20.0
+private const val BAD_PARKOUR_EDGE_TICKS = 40
+private const val BAD_PARKOUR_EDGE_COST = 100.0
+private const val PARKOUR_PENALTY_NO_ROUTE_COOLDOWN_TICKS = 10
 private const val ATTACK_POSITION_STEP = 10
 private const val MIN_ATTACK_SLOT_RADIUS = 1.0
 private const val MAX_LOGGED_CANDIDATES = 32
@@ -360,8 +518,39 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
     override val allowDiagonal: Boolean get() = true
     override val allowClimbableNavigation: Boolean get() = true
+    override val allowParkourNavigation: Boolean get() = Parkour.running
+    override val allowParkourSprint: Boolean get() = Parkour.running && autoSprintEnabled
     override val maxIterations: Int get() = 500
     override val stopRange: Double get() = 0.75
+
+    private val combatPathMaxCost: Int
+        get() = if (Parkour.running) PARKOUR_PATH_MAX_COST else PATH_MAX_COST
+
+    override fun recordParkourEdgeCandidate(start: Vec3i, landing: Vec3i) {
+        activeDiagnostics?.apply {
+            parkourEdgeCandidates++
+        }
+    }
+
+    override fun recordParkourEdgeAccepted(start: Vec3i, landing: Vec3i) {
+        activeDiagnostics?.apply {
+            parkourEdgeAccepted++
+        }
+    }
+
+    override fun recordParkourEdgeRejected(reason: String) {
+        activeDiagnostics?.apply {
+            when (reason) {
+                "transit" -> parkourTransitRejected++
+                "landing" -> parkourLandingRejected++
+                "simulation" -> parkourSimulationRejected++
+            }
+        }
+    }
+
+    override fun getParkourEdgeExtraCost(start: Vec3i, landing: Vec3i): Double {
+        return if (isParkourEdgePenalized(start, landing)) BAD_PARKOUR_EDGE_COST else 0.0
+    }
 
     private val opponentRange by float("OpponentRange", 3f, 0.1f..10f)
     private val dangerousYawDiff by float("DangerousYaw", 55f, 0f..90f, suffix = "°")
@@ -377,6 +566,15 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
     private var activeWaypointKind = BlockPathNodeKind.WALK
     private var activeStepUpJumpBlock: Vec3i? = null
     private var activeStepUpJumpTicks = 0
+    private var activeParkourLaunchBlock: Vec3i? = null
+    private var activeParkourLandingBlock: Vec3i? = null
+    private var activeParkourLaunchPoint: Vec3? = null
+    private var activeParkourPhase = FightBotParkourPhase.NONE
+    private var activeParkourAirTicks = 0
+    private var activeParkourJumpTicks = 0
+    private var activeParkourMiss = false
+    private var penalizedParkourEdge: FightBotPenalizedParkourEdge? = null
+    private var parkourPenaltyNoRouteUntilTick = 0
     private var penalizedGoal: BlockPos? = null
     private var penalizedGoalUntilTick = 0
     private var activeDiagnostics: FightBotDiagnosticsTrace? = null
@@ -395,6 +593,8 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         internal val radius by float("Radius", 5f, 2f..10f)
     }
 
+    private object Parkour : ToggleableValueGroup(this, "Parkour", false) {}
+
     private object Diagnostics : ToggleableValueGroup(this, "Diagnostics", false) {
         internal val intervalTicks by int("IntervalTicks", 10, 1..100, "ticks")
         internal val slowThresholdMs by int("SlowThreshold", 4, 1..100, "ms")
@@ -408,6 +608,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
     init {
         tree(TargetFilter)
         tree(LeaderFollower)
+        tree(Parkour)
         tree(Diagnostics)
     }
 
@@ -469,10 +670,21 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         } finally {
             if (diagnostics != null) {
                 diagnostics.totalNs = System.nanoTime() - diagnostics.startedNs
+                diagnostics.pathMaxCost = combatPathMaxCost
+                diagnostics.parkourEnabled = Parkour.running
+                diagnostics.parkourSprintAllowed = allowParkourSprint
                 diagnostics.activeWaypoint = activeWaypoint
                 diagnostics.activeWaypointKind = activeWaypointKind
                 diagnostics.activeWaypointClimbable = activeWaypointClimbable
                 diagnostics.stepUpJumpTicks = activeStepUpJumpTicks
+                diagnostics.parkourLaunchBlock = activeParkourLaunchBlock
+                diagnostics.parkourLandingBlock = activeParkourLandingBlock
+                diagnostics.parkourLaunchPoint = activeParkourLaunchPoint
+                diagnostics.parkourAirTicks = activeParkourAirTicks
+                diagnostics.parkourPhase = activeParkourPhase
+                diagnostics.parkourJumpReady = isActiveParkourJumpReady()
+                diagnostics.parkourMiss = activeParkourMiss
+                diagnostics.parkourPenaltyActive = isAnyParkourPenaltyActive()
                 publishDiagnostics(context, diagnostics, result)
             }
             activeDiagnostics = null
@@ -522,7 +734,11 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             isClimbableWaypoint = activeWaypointClimbable,
         )?.let { return it }
 
-        val degrees = getDegreesRelativeToView(goal.subtract(player.position()), player.yRot)
+        val movementGoal = activeParkourLandingBlock
+            ?.takeIf { shouldSteerToParkourLanding() }
+            ?.bottomCenter
+            ?: goal
+        val degrees = getDegreesRelativeToView(movementGoal.subtract(player.position()), player.yRot)
         return getDirectionalInputForDegrees(DirectionalInput.NONE, degrees, deadAngle = 20.0F)
     }
 
@@ -531,6 +747,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
         val waypoint = activeWaypoint ?: goal
         val isStepUpWaypoint = activeWaypointKind == BlockPathNodeKind.STEP_UP
+        val isParkourWaypoint = activeWaypointKind == BlockPathNodeKind.PARKOUR_JUMP
         val stepUpBlock = activeWaypointBlock?.takeIf { isStepUpWaypoint }
         if (activeStepUpJumpBlock != stepUpBlock) {
             activeStepUpJumpBlock = stepUpBlock
@@ -551,13 +768,25 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             onClimbable = player.onClimbable(),
             isClimbableWaypoint = activeWaypointClimbable,
         )
+        val needsParkour = shouldJumpForFightBotParkourWaypoint(
+            launchBlock = activeParkourLaunchBlock,
+            landingBlock = activeParkourLandingBlock,
+            launchPoint = activeParkourLaunchPoint,
+            playerBlock = player.blockPosition(),
+            playerPosition = player.position(),
+            onGround = player.onGround(),
+            isParkourWaypoint = isParkourWaypoint,
+            airTicks = activeParkourAirTicks,
+            jumpTicks = activeParkourJumpTicks,
+        )
         val blockedWhileMoving = !activeWaypointClimbable &&
             !isStepUpWaypoint &&
+            !isParkourWaypoint &&
             player.horizontalCollision &&
             player.onGround() &&
             player.position().distanceToSqr(waypoint) > WAYPOINT_REACHED_DISTANCE_SQ
 
-        if (needsStepUp || needsClimb || blockedWhileMoving) {
+        if (needsStepUp || needsClimb || needsParkour || blockedWhileMoving) {
             event.jump = true
         }
 
@@ -565,6 +794,36 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             activeStepUpJumpTicks++
         } else if (isStepUpWaypoint && player.onGround()) {
             activeStepUpJumpTicks = 0
+        }
+
+        if (isParkourWaypoint) {
+            if (needsParkour) {
+                activeParkourPhase = FightBotParkourPhase.JUMP
+                activeParkourJumpTicks++
+            }
+
+            val landedOnExpectedBlock = player.onGround() && player.blockPosition() == activeParkourLandingBlock
+            if (!player.onGround()) {
+                activeParkourAirTicks++
+                activeParkourPhase = FightBotParkourPhase.AIRBORNE
+            } else if (activeParkourAirTicks > 0 && landedOnExpectedBlock) {
+                activeParkourPhase = FightBotParkourPhase.LANDED
+            } else if (activeParkourAirTicks > 0) {
+                activeParkourMiss = true
+                activeParkourPhase = FightBotParkourPhase.MISSED
+            } else if (
+                activeParkourPhase == FightBotParkourPhase.JUMP &&
+                activeParkourJumpTicks >= PARKOUR_JUMP_HOLD_TICKS
+            ) {
+                activeParkourMiss = true
+                activeParkourPhase = FightBotParkourPhase.MISSED
+            } else if (!needsParkour && activeParkourPhase == FightBotParkourPhase.NONE) {
+                activeParkourPhase = FightBotParkourPhase.APPROACH
+            }
+        } else {
+            activeParkourAirTicks = 0
+            activeParkourJumpTicks = 0
+            activeParkourPhase = FightBotParkourPhase.NONE
         }
     }
 
@@ -574,7 +833,10 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
      * @return Movement rotation or null if no target
      */
     override fun getMovementRotation(): Rotation {
-        val movementRotation = super.getMovementRotation()
+        val movementRotation = activeParkourLandingBlock
+            ?.takeIf { activeWaypointKind == BlockPathNodeKind.PARKOUR_JUMP }
+            ?.let { Rotation.lookingAt(point = it.bottomCenter, from = player.eyePosition).copy(pitch = 0.0f) }
+            ?: super.getMovementRotation()
         val movementPitch = targetTracker.target?.let { entity ->
             Rotation.lookingAt(point = entity.boundingBox.center, from = player.eyePosition).pitch
         } ?: return movementRotation
@@ -647,11 +909,25 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             return null
         }
 
+        if (tryUseParkourPenaltyCooldown(combatTarget)) {
+            return null
+        }
+
         findBestAttackRoute(context, combatTarget)?.let { route ->
             return activateAttackRoute(context, combatTarget, route)
         }
 
         clearCombatPath()
+        if (isAnyParkourPenaltyActive()) {
+            parkourPenaltyNoRouteUntilTick = player.tickCount + PARKOUR_PENALTY_NO_ROUTE_COOLDOWN_TICKS
+            activeDiagnostics?.apply {
+                selectedMode = "attackParkourRoutePenalty"
+                selectedGoalBlock = combatTarget.entity.blockPosition()
+                parkourPenaltyActive = true
+            }
+            return null
+        }
+
         cacheUnreachableRoute(combatTarget)
         activeDiagnostics?.apply {
             selectedMode = "attackNoRoute"
@@ -678,12 +954,17 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             selectedPathNodes = cachedPath.nodes.size
             val climbableNodes = cachedPath.nodes.filter(::isClimbablePathNode)
             val stepUpNodes = cachedPath.steps.filter { it.kind == BlockPathNodeKind.STEP_UP }
+            val parkourNodes = cachedPath.steps.filter { it.kind == BlockPathNodeKind.PARKOUR_JUMP }
             selectedClimbablePathNodes = climbableNodes.size
             selectedStepUpPathNodes = stepUpNodes.size
+            selectedParkourPathNodes = parkourNodes.size
+            parkourValidated = parkourNodes.isNotEmpty()
             climbablePathNodeBlocks.clear()
             climbablePathNodeBlocks += climbableNodes.take(MAX_LOGGED_CANDIDATES)
             stepUpPathNodeBlocks.clear()
             stepUpPathNodeBlocks += stepUpNodes.map { it.position }.take(MAX_LOGGED_CANDIDATES)
+            parkourPathNodeBlocks.clear()
+            parkourPathNodeBlocks += parkourNodes.map { it.position }.take(MAX_LOGGED_CANDIDATES)
             pathStepKinds.clear()
             pathStepKinds += cachedPath.steps.map { it.kind }.take(MAX_LOGGED_CANDIDATES)
         }
@@ -699,7 +980,9 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                 route = unreachableRoute,
                 targetId = combatTarget.entity.id,
                 targetBlock = targetBlock,
-                playerBlock = playerBlock
+                playerBlock = playerBlock,
+                parkourEnabled = Parkour.running,
+                parkourSprintAllowed = allowParkourSprint,
             )
         ) {
             unreachableCombatRoute = null
@@ -723,12 +1006,29 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         return true
     }
 
+    private fun tryUseParkourPenaltyCooldown(combatTarget: CombatTarget): Boolean {
+        if (!isAnyParkourPenaltyActive() || player.tickCount >= parkourPenaltyNoRouteUntilTick) {
+            return false
+        }
+
+        clearCombatPath()
+        activeDiagnostics?.apply {
+            cacheState = "parkourPenalty"
+            selectedMode = "attackParkourPenaltyCached"
+            selectedGoalBlock = combatTarget.entity.blockPosition()
+            parkourPenaltyActive = true
+        }
+        return true
+    }
+
     private fun cacheUnreachableRoute(combatTarget: CombatTarget) {
         val route = nextFightBotUnreachableRoute(
             previous = unreachableCombatRoute,
             targetId = combatTarget.entity.id,
             targetBlock = combatTarget.entity.blockPosition(),
             playerBlock = player.blockPosition(),
+            parkourEnabled = Parkour.running,
+            parkourSprintAllowed = allowParkourSprint,
             currentTick = player.tickCount,
         )
         unreachableCombatRoute = route
@@ -887,6 +1187,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         val cachedPath = CachedCombatPath(
             targetId = combatTarget.entity.id,
             targetBlock = combatTarget.entity.blockPosition(),
+            startBlock = player.blockPosition(),
             goalBlock = route.candidate.blockPos,
             destination = route.candidate.position,
             nodes = route.path?.nodes.orEmpty(),
@@ -895,8 +1196,10 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         )
         cachedCombatPath = cachedPath
         unreachableCombatRoute = null
+        parkourPenaltyNoRouteUntilTick = 0
         val climbableNodes = cachedPath.nodes.filter(::isClimbablePathNode)
         val stepUpNodes = cachedPath.steps.filter { it.kind == BlockPathNodeKind.STEP_UP }
+        val parkourNodes = cachedPath.steps.filter { it.kind == BlockPathNodeKind.PARKOUR_JUMP }
         activeDiagnostics?.apply {
             selectedMode = if (route.path == null) "directAttack" else "pathAttack"
             selectedGoalBlock = route.candidate.blockPos
@@ -904,10 +1207,14 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             selectedPathNodes = route.path?.nodes?.size ?: 0
             selectedClimbablePathNodes = climbableNodes.size
             selectedStepUpPathNodes = stepUpNodes.size
+            selectedParkourPathNodes = parkourNodes.size
+            parkourValidated = parkourNodes.isNotEmpty()
             climbablePathNodeBlocks.clear()
             climbablePathNodeBlocks += climbableNodes.take(MAX_LOGGED_CANDIDATES)
             stepUpPathNodeBlocks.clear()
             stepUpPathNodeBlocks += stepUpNodes.map { it.position }.take(MAX_LOGGED_CANDIDATES)
+            parkourPathNodeBlocks.clear()
+            parkourPathNodeBlocks += parkourNodes.map { it.position }.take(MAX_LOGGED_CANDIDATES)
             pathStepKinds.clear()
             pathStepKinds += cachedPath.steps.map { it.kind }.take(MAX_LOGGED_CANDIDATES)
         }
@@ -926,23 +1233,67 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
         val waypointStep = cachedPath.steps[cachedPath.waypointIndex]
         val waypointNode = waypointStep.position
-        val waypoint = waypointNode.bottomCenter
+        val parkourLaunchBlock = cachedPath.previousNode(cachedPath.waypointIndex)
+            ?.takeIf { waypointStep.kind == BlockPathNodeKind.PARKOUR_JUMP }
+        val parkourLaunchPoint = parkourLaunchBlock
+            ?.let { fightBotParkourLaunchPoint(it, waypointNode) }
+        val waypoint = when {
+            waypointStep.kind == BlockPathNodeKind.PARKOUR_JUMP &&
+                !shouldSteerToParkourLanding(waypointStep.kind) &&
+                parkourLaunchPoint != null -> parkourLaunchPoint
+            else -> waypointNode.bottomCenter
+        }
         if (isStuckOnWaypoint(cachedPath, playerPosition, waypoint, waypointStep.kind)) {
-            penalizeGoal(cachedPath.goalBlock)
+            if (waypointStep.kind == BlockPathNodeKind.PARKOUR_JUMP && parkourLaunchBlock != null) {
+                penalizeParkourEdge(parkourLaunchBlock, waypointNode)
+            } else {
+                penalizeGoal(cachedPath.goalBlock)
+            }
             clearCombatPath()
             activeDiagnostics?.stuck = true
             return null
         }
 
-        setActiveWaypoint(waypoint, waypointNode, waypointStep.kind)
+        setActiveWaypoint(
+            waypoint = waypoint,
+            waypointNode = waypointNode,
+            waypointKind = waypointStep.kind,
+            parkourLaunchBlock = parkourLaunchBlock,
+            parkourLaunchPoint = parkourLaunchPoint,
+        )
         return waypoint
     }
 
     private fun setActiveWaypoint(
         waypoint: Vec3,
         waypointNode: Vec3i? = null,
-        waypointKind: BlockPathNodeKind = BlockPathNodeKind.WALK
+        waypointKind: BlockPathNodeKind = BlockPathNodeKind.WALK,
+        parkourLaunchBlock: Vec3i? = null,
+        parkourLaunchPoint: Vec3? = null,
     ) {
+        if (waypointKind == BlockPathNodeKind.PARKOUR_JUMP) {
+            if (activeParkourLaunchBlock != parkourLaunchBlock || activeParkourLandingBlock != waypointNode) {
+                activeParkourAirTicks = 0
+                activeParkourJumpTicks = 0
+                activeParkourMiss = false
+                activeParkourPhase = FightBotParkourPhase.APPROACH
+            }
+            activeParkourLaunchBlock = parkourLaunchBlock
+            activeParkourLandingBlock = waypointNode
+            activeParkourLaunchPoint = parkourLaunchPoint
+            if (activeParkourPhase == FightBotParkourPhase.NONE) {
+                activeParkourPhase = FightBotParkourPhase.APPROACH
+            }
+        } else {
+            activeParkourLaunchBlock = null
+            activeParkourLandingBlock = null
+            activeParkourLaunchPoint = null
+            activeParkourAirTicks = 0
+            activeParkourJumpTicks = 0
+            activeParkourMiss = false
+            activeParkourPhase = FightBotParkourPhase.NONE
+        }
+
         activeWaypoint = waypoint
         activeWaypointBlock = waypointNode
         activeWaypointKind = waypointKind
@@ -952,17 +1303,43 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             activeWaypointClimbable = this@KillAuraFightBot.activeWaypointClimbable
             activeWaypointKind = waypointKind
             stepUpJumpTicks = activeStepUpJumpTicks
+            this.parkourLaunchBlock = this@KillAuraFightBot.activeParkourLaunchBlock
+            this.parkourLandingBlock = this@KillAuraFightBot.activeParkourLandingBlock
+            this.parkourLaunchPoint = this@KillAuraFightBot.activeParkourLaunchPoint
+            this.parkourAirTicks = activeParkourAirTicks
+            this.parkourPhase = activeParkourPhase
+            this.parkourJumpReady = isActiveParkourJumpReady()
+            this.parkourMiss = activeParkourMiss
+            this.parkourPenaltyActive = isAnyParkourPenaltyActive()
         }
     }
 
     private fun advanceReachedWaypoints(cachedPath: CachedCombatPath, playerPosition: Vec3) {
         var nextIndex = cachedPath.waypointIndex
-        while (nextIndex < cachedPath.nodes.size &&
-            playerPosition.distanceToSqr(cachedPath.nodes[nextIndex].bottomCenter) <= WAYPOINT_REACHED_DISTANCE_SQ
-        ) {
+        while (nextIndex < cachedPath.nodes.size) {
             val currentStep = cachedPath.steps[nextIndex]
             val currentNode = currentStep.position
+            val reached = playerPosition.distanceToSqr(currentNode.bottomCenter) <= WAYPOINT_REACHED_DISTANCE_SQ ||
+                hasLandedFightBotParkourWaypoint(
+                    landingBlock = currentNode,
+                    playerBlock = player.blockPosition(),
+                    onGround = player.onGround(),
+                    waypointKind = currentStep.kind
+                )
+            if (!reached) {
+                break
+            }
+
             if (!hasClearedFightBotStepUpWaypoint(currentNode.y.toDouble(), playerPosition.y, currentStep.kind)) {
+                break
+            }
+            if (!hasLandedFightBotParkourWaypoint(
+                    landingBlock = currentNode,
+                    playerBlock = player.blockPosition(),
+                    onGround = player.onGround(),
+                    waypointKind = currentStep.kind
+                )
+            ) {
                 break
             }
 
@@ -999,6 +1376,15 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         }
     }
 
+    private fun CachedCombatPath.previousNode(index: Int): Vec3i? {
+        return when {
+            index < 0 -> null
+            index == 0 -> startBlock
+            index - 1 in steps.indices -> steps[index - 1].position
+            else -> null
+        }
+    }
+
     private fun updateWaypointIndex(cachedPath: CachedCombatPath, waypointIndex: Int) {
         if (cachedPath.waypointIndex == waypointIndex) {
             return
@@ -1017,6 +1403,21 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         waypointKind: BlockPathNodeKind
     ): Boolean {
         val distanceSq = playerPosition.distanceToSqr(waypoint)
+        if (shouldSuppressFightBotParkourStuck(waypointKind, player.onGround(), activeParkourAirTicks)) {
+            cachedPath.bestWaypointDistanceSq = min(cachedPath.bestWaypointDistanceSq, distanceSq)
+            cachedPath.bestWaypointY = max(cachedPath.bestWaypointY, playerPosition.y)
+            cachedPath.stagnantTicks = 0
+            return false
+        }
+
+        if (waypointKind == BlockPathNodeKind.PARKOUR_JUMP &&
+            (activeParkourMiss || activeParkourAirTicks > PARKOUR_MAX_AIR_TICKS)
+        ) {
+            activeParkourMiss = true
+            activeDiagnostics?.parkourMiss = true
+            return true
+        }
+
         val distanceProgress = distanceSq < cachedPath.bestWaypointDistanceSq - STUCK_PROGRESS_EPSILON_SQ
         val stepUpProgress = waypointKind == BlockPathNodeKind.STEP_UP &&
             hasFightBotStepUpVerticalProgress(playerPosition.y, cachedPath.bestWaypointY)
@@ -1032,6 +1433,10 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         val stuck = cachedPath.stagnantTicks >= STUCK_TICKS && distanceSq > WAYPOINT_REACHED_DISTANCE_SQ
         if (stuck && waypointKind == BlockPathNodeKind.STEP_UP) {
             activeDiagnostics?.stepUpStuck = true
+        }
+        if (stuck && waypointKind == BlockPathNodeKind.PARKOUR_JUMP) {
+            activeParkourMiss = true
+            activeDiagnostics?.parkourMiss = true
         }
 
         return stuck
@@ -1060,8 +1465,18 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             val nextStep = path?.steps?.firstOrNull()
             if (nextStep != null) {
                 val nextNode = nextStep.position
-                val waypoint = nextNode.bottomCenter
-                setActiveWaypoint(waypoint, nextNode, nextStep.kind)
+                val parkourLaunchBlock = player.blockPosition().takeIf {
+                    nextStep.kind == BlockPathNodeKind.PARKOUR_JUMP
+                }
+                val parkourLaunchPoint = parkourLaunchBlock?.let { fightBotParkourLaunchPoint(it, nextNode) }
+                val waypoint = parkourLaunchPoint ?: nextNode.bottomCenter
+                setActiveWaypoint(
+                    waypoint = waypoint,
+                    waypointNode = nextNode,
+                    waypointKind = nextStep.kind,
+                    parkourLaunchBlock = parkourLaunchBlock,
+                    parkourLaunchPoint = parkourLaunchPoint,
+                )
                 activeDiagnostics?.apply {
                     selectedMode = "$selectedMode:path"
                     selectedGoalBlock = destinationBlock
@@ -1069,9 +1484,15 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                     selectedPathNodes = path.nodes.size
                     selectedClimbablePathNodes = path.nodes.count(::isClimbablePathNode)
                     selectedStepUpPathNodes = path.steps.count { it.kind == BlockPathNodeKind.STEP_UP }
+                    selectedParkourPathNodes = path.steps.count { it.kind == BlockPathNodeKind.PARKOUR_JUMP }
                     stepUpPathNodeBlocks.clear()
                     stepUpPathNodeBlocks += path.steps
                         .filter { it.kind == BlockPathNodeKind.STEP_UP }
+                        .map { it.position }
+                        .take(MAX_LOGGED_CANDIDATES)
+                    parkourPathNodeBlocks.clear()
+                    parkourPathNodeBlocks += path.steps
+                        .filter { it.kind == BlockPathNodeKind.PARKOUR_JUMP }
                         .map { it.position }
                         .take(MAX_LOGGED_CANDIDATES)
                     pathStepKinds.clear()
@@ -1094,10 +1515,11 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         activeDiagnostics?.apply {
             pathRequests++
             pathGoalCount++
+            pathMaxCost = combatPathMaxCost
             pathSearchMode = "singleGoal"
         }
 
-        val path = findPathDetailedResult(start, end, PATH_MAX_COST)
+        val path = findPathDetailedResult(start, end, combatPathMaxCost)
         activeDiagnostics?.apply {
             pathfindingNs += System.nanoTime() - diagnosticsStart
             if (path == null || path.nodes.isEmpty()) {
@@ -1115,10 +1537,11 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         activeDiagnostics?.apply {
             pathRequests++
             pathGoalCount += goals.size
+            pathMaxCost = combatPathMaxCost
             pathSearchMode = "multiGoal"
         }
 
-        val path = findPathToAnyDetailedResult(start, goals, PATH_MAX_COST)
+        val path = findPathToAnyDetailedResult(start, goals, combatPathMaxCost)
         activeDiagnostics?.apply {
             pathfindingNs += System.nanoTime() - diagnosticsStart
             if (path == null || path.nodes.isEmpty()) {
@@ -1233,6 +1656,9 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             addProperty("cache", trace.cacheState)
             addProperty("stuck", trace.stuck)
             addProperty("pathSearchMode", trace.pathSearchMode)
+            addProperty("parkourEnabled", trace.parkourEnabled)
+            addProperty("parkourSprintAllowed", trace.parkourSprintAllowed)
+            addProperty("pathMaxCost", trace.pathMaxCost)
             add("timings", trace.toTimingJson())
             add("counts", trace.toCountJson())
             add("player", createEntityPositionJson(player))
@@ -1248,9 +1674,20 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             add("acceptedCandidateBlocks", trace.acceptedCandidateBlocks.toBlockJsonArray())
             add("climbablePathNodes", trace.climbablePathNodeBlocks.toBlockJsonArray())
             add("stepUpPathNodes", trace.stepUpPathNodeBlocks.toBlockJsonArray())
+            add("parkourPathNodes", trace.parkourPathNodeBlocks.toBlockJsonArray())
+            add("selectedParkourPathNodes", trace.parkourPathNodeBlocks.toBlockJsonArray())
             add("pathStepKinds", trace.pathStepKinds.toJsonArray())
             addProperty("stepUpJumpTicks", trace.stepUpJumpTicks)
             addProperty("stepUpStuck", trace.stepUpStuck)
+            add("parkourLaunchBlock", trace.parkourLaunchBlock?.toJsonObject())
+            add("parkourLandingBlock", trace.parkourLandingBlock?.toJsonObject())
+            add("parkourLaunchPoint", trace.parkourLaunchPoint?.toJsonArray())
+            addProperty("parkourPhase", trace.parkourPhase.name)
+            addProperty("parkourJumpReady", trace.parkourJumpReady)
+            addProperty("parkourAirTicks", trace.parkourAirTicks)
+            addProperty("parkourValidated", trace.parkourValidated)
+            addProperty("parkourMiss", trace.parkourMiss)
+            addProperty("parkourPenaltyActive", trace.parkourPenaltyActive)
             add("cachedPath", cachedCombatPath?.toJsonObject())
             if (Diagnostics.scanBlocks) {
                 add("nearbyBlocks", scanNearbyDebugBlocks(target))
@@ -1284,11 +1721,21 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             addProperty("selectedPathNodes", selectedPathNodes)
             addProperty("selectedClimbablePathNodes", selectedClimbablePathNodes)
             addProperty("selectedStepUpPathNodes", selectedStepUpPathNodes)
+            addProperty("selectedParkourPathNodes", selectedParkourPathNodes)
             addProperty("noRouteCacheTicks", noRouteCacheTicks)
             addProperty("unreachableCooldownTicks", unreachableCooldownTicks)
             addProperty("unreachableFailures", unreachableFailures)
             addProperty("pathGoalCount", pathGoalCount)
+            addProperty("pathMaxCost", pathMaxCost)
+            addProperty("parkourEdgeCandidates", parkourEdgeCandidates)
+            addProperty("parkourEdgeAccepted", parkourEdgeAccepted)
+            addProperty("parkourTransitRejected", parkourTransitRejected)
+            addProperty("parkourLandingRejected", parkourLandingRejected)
+            addProperty("parkourSimulationRejected", parkourSimulationRejected)
             addProperty("stepUpJumpTicks", stepUpJumpTicks)
+            addProperty("parkourAirTicks", parkourAirTicks)
+            addProperty("parkourJumpReady", parkourJumpReady)
+            addProperty("parkourPenaltyActive", parkourPenaltyActive)
         }
     }
 
@@ -1296,6 +1743,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         return JsonObject().apply {
             addProperty("targetId", targetId)
             add("targetBlock", targetBlock.toJsonObject())
+            add("startBlock", startBlock.toJsonObject())
             add("goalBlock", goalBlock.toJsonObject())
             add("destination", destination.toJsonArray())
             addProperty("createdTick", createdTick)
@@ -1310,6 +1758,14 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                 "stepUpNodes",
                 steps
                     .filter { it.kind == BlockPathNodeKind.STEP_UP }
+                    .map { it.position }
+                    .take(MAX_LOGGED_CANDIDATES)
+                    .toBlockJsonArray()
+            )
+            add(
+                "parkourNodes",
+                steps
+                    .filter { it.kind == BlockPathNodeKind.PARKOUR_JUMP }
                     .map { it.position }
                     .take(MAX_LOGGED_CANDIDATES)
                     .toBlockJsonArray()
@@ -1329,6 +1785,12 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
     }
 
     private fun scanNearbyDebugBlocks(target: Entity?): JsonArray {
+        data class DebugBlock(
+            val pos: BlockPos,
+            val blockId: String,
+            val climbable: Boolean,
+        )
+
         val playerBlock = player.blockPosition()
         val targetBlock = target?.blockPosition() ?: playerBlock
         val range = Diagnostics.blockScanRange
@@ -1338,7 +1800,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         val maxY = max(playerBlock.y, targetBlock.y) + 3
         val minZ = min(playerBlock.z, targetBlock.z) - range
         val maxZ = max(playerBlock.z, targetBlock.z) + range
-        val result = JsonArray()
+        val blocks = mutableListOf<DebugBlock>()
         val mutablePos = BlockPos.MutableBlockPos()
 
         for (x in minX..maxX) {
@@ -1351,20 +1813,44 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                         continue
                     }
 
-                    result.add(JsonObject().apply {
-                        add("pos", mutablePos.immutable().toJsonObject())
-                        addProperty("block", BuiltInRegistries.BLOCK.getKey(state.block).toString())
-                        addProperty("climbable", climbable)
-                    })
-
-                    if (result.size() >= Diagnostics.maxBlocks) {
-                        return result
-                    }
+                    blocks += DebugBlock(
+                        pos = mutablePos.immutable(),
+                        blockId = BuiltInRegistries.BLOCK.getKey(state.block).toString(),
+                        climbable = climbable,
+                    )
                 }
             }
         }
 
-        return result
+        val maxBlocks = Diagnostics.maxBlocks
+        val playerSlice = blocks
+            .sortedBy { it.pos.blockDistanceSq(playerBlock) }
+            .take(maxBlocks / 2)
+        val targetSlice = blocks
+            .sortedBy { it.pos.blockDistanceSq(targetBlock) }
+            .take(maxBlocks - playerSlice.size)
+        val selected = (playerSlice + targetSlice)
+            .distinctBy { it.pos }
+            .let { selected ->
+                if (selected.size >= maxBlocks) {
+                    selected.take(maxBlocks)
+                } else {
+                    selected + blocks
+                        .sortedBy { min(it.pos.blockDistanceSq(playerBlock), it.pos.blockDistanceSq(targetBlock)) }
+                        .filterNot { block -> selected.any { it.pos == block.pos } }
+                        .take(maxBlocks - selected.size)
+                }
+            }
+
+        return JsonArray().also { result ->
+            selected.forEach { block ->
+                result.add(JsonObject().apply {
+                    add("pos", block.pos.toJsonObject())
+                    addProperty("block", block.blockId)
+                    addProperty("climbable", block.climbable)
+                })
+            }
+        }
     }
 
     private fun Iterable<Vec3i>.toBlockJsonArray(): JsonArray {
@@ -1406,10 +1892,82 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         penalizedGoalUntilTick = player.tickCount + BAD_GOAL_TICKS
     }
 
+    private fun shouldSteerToParkourLanding(
+        waypointKind: BlockPathNodeKind = activeWaypointKind
+    ): Boolean {
+        return waypointKind == BlockPathNodeKind.PARKOUR_JUMP &&
+            (activeParkourAirTicks > 0 ||
+                activeParkourJumpTicks > 0 ||
+                activeParkourPhase == FightBotParkourPhase.JUMP ||
+                activeParkourPhase == FightBotParkourPhase.AIRBORNE ||
+                isActiveParkourJumpReady(waypointKind))
+    }
+
+    private fun isActiveParkourJumpReady(
+        waypointKind: BlockPathNodeKind = activeWaypointKind
+    ): Boolean {
+        return shouldJumpForFightBotParkourWaypoint(
+            launchBlock = activeParkourLaunchBlock,
+            landingBlock = activeParkourLandingBlock,
+            launchPoint = activeParkourLaunchPoint,
+            playerBlock = player.blockPosition(),
+            playerPosition = player.position(),
+            onGround = player.onGround(),
+            isParkourWaypoint = waypointKind == BlockPathNodeKind.PARKOUR_JUMP,
+            airTicks = activeParkourAirTicks,
+            jumpTicks = activeParkourJumpTicks,
+        )
+    }
+
+    private fun isParkourEdgePenalized(start: Vec3i, landing: Vec3i): Boolean {
+        val penalty = activeParkourPenalty() ?: return false
+
+        return penalty.edge.launchBlock == start.toImmutableBlockPos() &&
+            penalty.edge.landingBlock == landing.toImmutableBlockPos()
+    }
+
+    private fun isAnyParkourPenaltyActive(): Boolean {
+        return activeParkourPenalty() != null
+    }
+
+    private fun activeParkourPenalty(): FightBotPenalizedParkourEdge? {
+        val penalty = penalizedParkourEdge ?: return null
+        if (player.tickCount >= penalty.untilTick) {
+            penalizedParkourEdge = null
+            parkourPenaltyNoRouteUntilTick = 0
+            return null
+        }
+
+        return penalty
+    }
+
+    private fun penalizeParkourEdge(launchBlock: Vec3i, landingBlock: Vec3i) {
+        penalizedParkourEdge = FightBotPenalizedParkourEdge(
+            edge = FightBotParkourEdge(
+                launchBlock = launchBlock.toImmutableBlockPos(),
+                landingBlock = landingBlock.toImmutableBlockPos(),
+            ),
+            untilTick = player.tickCount + BAD_PARKOUR_EDGE_TICKS,
+        )
+        parkourPenaltyNoRouteUntilTick = 0
+        activeDiagnostics?.parkourPenaltyActive = true
+    }
+
+    private fun Vec3i.toImmutableBlockPos(): BlockPos {
+        return BlockPos(x, y, z)
+    }
+
     private fun clearCombatPath() {
         cachedCombatPath = null
         activeStepUpJumpBlock = null
         activeStepUpJumpTicks = 0
+        activeParkourLaunchBlock = null
+        activeParkourLandingBlock = null
+        activeParkourLaunchPoint = null
+        activeParkourAirTicks = 0
+        activeParkourJumpTicks = 0
+        activeParkourMiss = false
+        activeParkourPhase = FightBotParkourPhase.NONE
     }
 
 }
