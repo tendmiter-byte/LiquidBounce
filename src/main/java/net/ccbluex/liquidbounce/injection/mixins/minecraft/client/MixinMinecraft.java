@@ -19,8 +19,6 @@
 package net.ccbluex.liquidbounce.injection.mixins.minecraft.client;
 
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
-import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
-import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
 import com.llamalad7.mixinextras.sugar.Local;
 import com.mojang.blaze3d.platform.Window;
@@ -354,32 +352,14 @@ public abstract class MixinMinecraft {
         return original;
     }
 
-    @WrapOperation(
-        method = "startAttack",
-        at = @At(
-            value = "INVOKE",
-            target = "Lnet/minecraft/world/item/component/AttackRange;isInRange(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/phys/Vec3;)Z"
-        )
-    )
-    private boolean injectReachAttackRange(AttackRange instance, LivingEntity attacker, Vec3 pos, Operation<Boolean> original) {
-        if (ModuleReach.INSTANCE.getRunning()) {
-            Entity target = null;
-            if (this.hitResult instanceof EntityHitResult entityHitResult) {
-                target = entityHitResult.getEntity();
-            }
-            if (target != null) {
-                double allowedRange = ModuleReach.INSTANCE.getEntity().getInteractionRangeFor(target);
-                if (!attacker.hasLineOfSight(target)) {
-                    allowedRange = ModuleReach.INSTANCE.getEntity().getThroughWallsRangeFor(target);
-                }
-                double distanceSqr = attacker.distanceToSqr(pos);
-                double hitboxMargin = instance.hitboxMargin();
-                double allowedReachWithMargin = allowedRange + hitboxMargin;
-                return distanceSqr <= allowedReachWithMargin * allowedReachWithMargin;
-            }
-        }
+    @Inject(method = "startAttack", at = @At("HEAD"))
+    private void beforeStartAttack(CallbackInfoReturnable<Boolean> cir) {
+        ModuleReach.isCheckingAttackRange = true;
+    }
 
-        return original.call(instance, attacker, pos);
+    @Inject(method = "startAttack", at = @At("RETURN"))
+    private void afterStartAttack(CallbackInfoReturnable<Boolean> cir) {
+        ModuleReach.isCheckingAttackRange = false;
     }
 
     @WrapWithCondition(method = "startAttack", at = @At(value = "FIELD",

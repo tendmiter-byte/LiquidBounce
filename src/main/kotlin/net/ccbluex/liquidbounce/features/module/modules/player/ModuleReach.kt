@@ -33,4 +33,7 @@ import net.ccbluex.liquidbounce.utils.range.RangeValueGroup
 object ModuleReach : ClientModule("Reach", ModuleCategories.PLAYER) {
     val entity = tree(RangeValueGroup("Entity", 1f, 0f))
     val blockRangeIncrease by float("BlockRangeIncrease", 0.5f, 0f..64f)
+
+    @JvmField
+    var isCheckingAttackRange = false
 }

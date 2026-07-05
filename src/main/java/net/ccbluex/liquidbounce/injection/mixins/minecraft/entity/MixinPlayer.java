@@ -194,11 +194,18 @@ public abstract class MixinPlayer extends MixinLivingEntity {
     @ModifyReturnValue(method = "entityInteractionRange", at = @At("RETURN"))
     private double hookEntityInteractionRange(double original) {
         if (liquid_bounce$isClientPlayer() && ModuleReach.INSTANCE.getRunning()) {
-            // Use effectiveInteractionRange instead of interactionRange so that
-            // Progressive mode does NOT extend entity detection range upfront.
-            // The actual hit check in startAttack uses adjustAttackRange(entity)
-            // which calls getInteractionRangeFor(entity) and enforces the
-            // combo/delay requirements before granting extra reach.
+            if (ModuleReach.isCheckingAttackRange) {
+                var mc = net.minecraft.client.Minecraft.getInstance();
+                if (mc.hitResult instanceof net.minecraft.world.phys.EntityHitResult entityHitResult) {
+                    var target = entityHitResult.getEntity();
+                    if (target != null) {
+                        if (!((Player) (Object) this).hasLineOfSight(target)) {
+                            return ModuleReach.INSTANCE.getEntity().getThroughWallsRangeFor(target);
+                        }
+                        return ModuleReach.INSTANCE.getEntity().getInteractionRangeFor(target);
+                    }
+                }
+            }
             return ModuleReach.INSTANCE.getEntity().getEffectiveInteractionRange();
         }
 
