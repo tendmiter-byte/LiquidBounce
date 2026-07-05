@@ -66,6 +66,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.protocol.game.ServerboundSwingPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.component.AttackRange;
@@ -342,7 +343,7 @@ public abstract class MixinLocalPlayer extends MixinPlayer implements LocalPlaye
             if (predicate.test(entity)) {
                 if (ModuleReach.INSTANCE.getRunning()) {
                     double allowedRange = ModuleReach.INSTANCE.getEntity().getInteractionRangeFor(entity);
-                    if (!camera.hasLineOfSight(entity)) {
+                    if (camera instanceof LivingEntity livingCamera && !livingCamera.hasLineOfSight(entity)) {
                         allowedRange = ModuleReach.INSTANCE.getEntity().getThroughWallsRangeFor(entity);
                     }
                     double distanceSqr = camera.distanceToSqr(entity.position());
