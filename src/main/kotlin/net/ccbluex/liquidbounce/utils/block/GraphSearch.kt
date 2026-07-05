@@ -36,6 +36,26 @@ data class ShortestPath<T>(
     val totalCost: Double,
 )
 
+enum class PathSearchExitReason {
+    GOAL_REACHED,
+    MAX_ITERATIONS,
+    EXHAUSTED
+}
+
+@JvmRecord
+data class PathSearchStats(
+    val exitReason: PathSearchExitReason,
+    val iterations: Int,
+    val visitedNodes: Int,
+    val queuePeak: Int,
+)
+
+@JvmRecord
+data class PathSearchResult<T>(
+    val path: ShortestPath<T>?,
+    val stats: PathSearchStats,
+)
+
 @JvmRecord
 private data class QueueEntry<T>(
     val node: T,
@@ -55,7 +75,23 @@ fun <T> aStarShortestPath(
     heuristic: ToDoubleFunction<T>,
     maxIterations: Int = Int.MAX_VALUE,
     maxCost: Double = Double.POSITIVE_INFINITY,
-): ShortestPath<T>? {
+): ShortestPath<T>? = aStarShortestPathResult(
+    start = start,
+    isGoal = isGoal,
+    neighbors = neighbors,
+    heuristic = heuristic,
+    maxIterations = maxIterations,
+    maxCost = maxCost,
+).path
+
+fun <T> aStarShortestPathResult(
+    start: T,
+    isGoal: Predicate<T>,
+    neighbors: (T) -> Iterable<WeightedEdge<T>>,
+    heuristic: ToDoubleFunction<T>,
+    maxIterations: Int = Int.MAX_VALUE,
+    maxCost: Double = Double.POSITIVE_INFINITY,
+): PathSearchResult<T> {
     require(maxIterations > 0) { "maxIterations must be positive." }
 
     val gScores = Object2DoubleOpenHashMap<T>().apply {
@@ -68,20 +104,39 @@ fun <T> aStarShortestPath(
     queue.add(QueueEntry(start, 0.0, heuristic.applyAsDouble(start)))
 
     var iterations = 0
+    var visitedNodes = 0
+    var queuePeak = queue.size
     while (queue.isNotEmpty()) {
-        iterations++
-        if (iterations > maxIterations) {
-            break
+        if (iterations >= maxIterations) {
+            return PathSearchResult(
+                path = null,
+                stats = PathSearchStats(
+                    exitReason = PathSearchExitReason.MAX_ITERATIONS,
+                    iterations = iterations,
+                    visitedNodes = visitedNodes,
+                    queuePeak = queuePeak
+                )
+            )
         }
 
+        iterations++
         val current = queue.poll()
         val bestCurrentG = gScores.getDouble(current.node)
         if (current.gScore > bestCurrentG || current.gScore > maxCost) {
             continue
         }
 
+        visitedNodes++
         if (isGoal.test(current.node)) {
-            return ShortestPath(reconstructPath(start, current.node, previous), current.gScore)
+            return PathSearchResult(
+                path = ShortestPath(reconstructPath(start, current.node, previous), current.gScore),
+                stats = PathSearchStats(
+                    exitReason = PathSearchExitReason.GOAL_REACHED,
+                    iterations = iterations,
+                    visitedNodes = visitedNodes,
+                    queuePeak = queuePeak
+                )
+            )
         }
 
         for (edge in neighbors(current.node)) {
@@ -102,10 +157,21 @@ fun <T> aStarShortestPath(
 
             val fScore = candidateG + heuristic.applyAsDouble(edge.node)
             queue.add(QueueEntry(edge.node, candidateG, fScore))
+            if (queue.size > queuePeak) {
+                queuePeak = queue.size
+            }
         }
     }
 
-    return null
+    return PathSearchResult(
+        path = null,
+        stats = PathSearchStats(
+            exitReason = PathSearchExitReason.EXHAUSTED,
+            iterations = iterations,
+            visitedNodes = visitedNodes,
+            queuePeak = queuePeak
+        )
+    )
 }
 
 private fun <T> reconstructPath(

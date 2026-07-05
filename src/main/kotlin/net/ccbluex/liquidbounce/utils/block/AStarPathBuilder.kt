@@ -77,6 +77,49 @@ data class DetailedBlockPathResult(
     val totalCost: Double,
 )
 
+data class DetailedBlockPathSearchResult(
+    val path: DetailedBlockPathResult?,
+    val stats: PathSearchStats,
+    val bounds: BlockPathSearchBounds?,
+)
+
+data class BlockPathSearchBounds(
+    val minX: Int,
+    val maxX: Int,
+    val minY: Int,
+    val maxY: Int,
+    val minZ: Int,
+    val maxZ: Int,
+) {
+    fun contains(position: Vec3i): Boolean {
+        return position.x in minX..maxX &&
+            position.y in minY..maxY &&
+            position.z in minZ..maxZ
+    }
+
+    companion object {
+        fun around(
+            positions: Collection<Vec3i>,
+            horizontalPadding: Int,
+            maxStepUp: Int,
+            maxDropDown: Int,
+        ): BlockPathSearchBounds? {
+            if (positions.isEmpty()) {
+                return null
+            }
+
+            return BlockPathSearchBounds(
+                minX = positions.minOf { it.x } - horizontalPadding,
+                maxX = positions.maxOf { it.x } + horizontalPadding,
+                minY = positions.minOf { it.y } - maxDropDown - 1,
+                maxY = positions.maxOf { it.y } + maxStepUp + 2,
+                minZ = positions.minOf { it.z } - horizontalPadding,
+                maxZ = positions.maxOf { it.z } + horizontalPadding,
+            )
+        }
+    }
+}
+
 internal fun classifyBlockPathNodeKind(
     previous: Vec3i,
     next: Vec3i,
@@ -275,74 +318,120 @@ interface AStarPathBuilder {
     fun findPathToAnyDetailedResult(
         start: Vec3i,
         goals: Collection<Vec3i>,
-        maxCost: Int
+        maxCost: Int,
+        bounds: BlockPathSearchBounds? = null,
     ): DetailedBlockPathResult? {
+        return findPathToAnyDetailedSearchResult(start, goals, maxCost, bounds).path
+    }
+
+    fun findPathToAnyDetailedSearchResult(
+        start: Vec3i,
+        goals: Collection<Vec3i>,
+        maxCost: Int,
+        bounds: BlockPathSearchBounds? = null,
+    ): DetailedBlockPathSearchResult {
         val goalList = goals.distinct()
         if (goalList.isEmpty()) {
-            return null
+            return DetailedBlockPathSearchResult(
+                path = null,
+                stats = PathSearchStats(PathSearchExitReason.EXHAUSTED, 0, 0, 0),
+                bounds = bounds
+            )
         }
 
         goalList.minByOrNull { it.distSqr(start) }
             ?.takeIf { it.closerThan(start, stopRange) }
-            ?.let { return DetailedBlockPathResult(it, emptyList(), emptyList(), 0.0) }
+            ?.let {
+                return DetailedBlockPathSearchResult(
+                    path = DetailedBlockPathResult(it, emptyList(), emptyList(), 0.0),
+                    stats = PathSearchStats(PathSearchExitReason.GOAL_REACHED, 0, 0, 1),
+                    bounds = bounds
+                )
+            }
 
-        val shortestPath = aStarShortestPath(
+        val searchResult = aStarShortestPathResult(
             start = start,
             isGoal = { position -> goalList.any { goal -> position.closerThan(goal, stopRange) } },
-            neighbors = ::getAdjacentEdges,
+            neighbors = { position -> getAdjacentEdges(position, bounds) },
             heuristic = { position -> goalList.minOf { goal -> sqrt(position.distSqr(goal)) } },
             maxIterations = maxIterations,
             maxCost = maxCost.toDouble(),
-        ) ?: return null
+        )
+        val shortestPath = searchResult.path ?: return DetailedBlockPathSearchResult(
+            path = null,
+            stats = searchResult.stats,
+            bounds = bounds
+        )
 
-        val reachedNode = shortestPath.nodes.lastOrNull() ?: return null
-        val reachedGoal = goalList.minByOrNull { it.distSqr(reachedNode) } ?: return null
+        val reachedNode = shortestPath.nodes.lastOrNull() ?: return DetailedBlockPathSearchResult(
+            path = null,
+            stats = searchResult.stats,
+            bounds = bounds
+        )
+        val reachedGoal = goalList.minByOrNull { it.distSqr(reachedNode) } ?: return DetailedBlockPathSearchResult(
+            path = null,
+            stats = searchResult.stats,
+            bounds = bounds
+        )
 
         // Exclude start node to preserve the original API contract.
         val nodes = shortestPath.nodes.drop(1)
-        return DetailedBlockPathResult(
-            reachedGoal = reachedGoal,
-            nodes = nodes,
-            steps = createBlockPathSteps(start, nodes, ::isClimbablePathNode, ::isParkourJumpEdge),
-            totalCost = shortestPath.totalCost
+        return DetailedBlockPathSearchResult(
+            path = DetailedBlockPathResult(
+                reachedGoal = reachedGoal,
+                nodes = nodes,
+                steps = createBlockPathSteps(start, nodes, ::isClimbablePathNode, ::isParkourJumpEdge),
+                totalCost = shortestPath.totalCost
+            ),
+            stats = searchResult.stats,
+            bounds = bounds
         )
     }
 
-    private fun getAdjacentEdges(position: Vec3i): List<WeightedEdge<Vec3i>> = buildList {
-        getAdjacentNodesDirect(position)
-        getAdjacentNodesClimbable(position)
-        getAdjacentNodesParkour(position)
+    private fun getAdjacentEdges(position: Vec3i, bounds: BlockPathSearchBounds?): List<WeightedEdge<Vec3i>> = buildList {
+        getAdjacentNodesDirect(position, bounds)
+        getAdjacentNodesClimbable(position, bounds)
+        getAdjacentNodesParkour(position, bounds)
         if (allowDiagonal) {
-            getAdjacentNodesDiagonal(position)
+            getAdjacentNodesDiagonal(position, bounds)
         }
     }
 
-    private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesDirect(position: Vec3i) {
+    private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesDirect(
+        position: Vec3i,
+        bounds: BlockPathSearchBounds?
+    ) {
         for (direction in cardinalDirections) {
-            val adjacentPosition = resolveNavigableNeighbor(position, direction, allowClimbable = true)
+            val adjacentPosition = resolveNavigableNeighbor(position, direction, allowClimbable = true, bounds = bounds)
             if (adjacentPosition != null) {
                 add(WeightedEdge(adjacentPosition, position.walkCostTo(adjacentPosition)))
             }
         }
     }
 
-    private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesClimbable(position: Vec3i) {
+    private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesClimbable(
+        position: Vec3i,
+        bounds: BlockPathSearchBounds?
+    ) {
         if (!allowClimbableNavigation || !position.isClimbableNode) {
             return
         }
 
         val above = BlockPos(position.x, position.y + 1, position.z)
-        if (above.isClimbableNode || above.isStandable) {
+        if (bounds.containsOrUnbounded(above) && (above.isClimbableNode || above.isStandable)) {
             add(WeightedEdge(above, CLIMB_UP_COST))
         }
 
         val below = BlockPos(position.x, position.y - 1, position.z)
-        if (below.isClimbableNode || below.isStandable) {
+        if (bounds.containsOrUnbounded(below) && (below.isClimbableNode || below.isStandable)) {
             add(WeightedEdge(below, CLIMB_DOWN_COST))
         }
     }
 
-    private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesParkour(position: Vec3i) {
+    private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesParkour(
+        position: Vec3i,
+        bounds: BlockPathSearchBounds?
+    ) {
         if (!allowParkourNavigation || !position.isStandable || !position.hasParkourSafeBodyBlocks()) {
             return
         }
@@ -353,6 +442,13 @@ interface AStarPathBuilder {
                 position.y,
                 position.z + direction.z
             )
+            if (!bounds.containsOrUnbounded(gap)) {
+                continue
+            }
+            if (isWalkableParkourMidpoint(position, direction, bounds)) {
+                recordParkourEdgeRejected("walkableMidpoint")
+                continue
+            }
             if (!gap.isBodyPassable() || !gap.hasParkourSafeBodyBlocks()) {
                 recordParkourEdgeRejected("transit")
                 continue
@@ -364,6 +460,9 @@ interface AStarPathBuilder {
                     position.y + offsetY,
                     position.z + direction.z * PARKOUR_JUMP_BLOCK_DISTANCE
                 )
+                if (!bounds.containsOrUnbounded(landing)) {
+                    continue
+                }
                 if (!landing.isStandable || !landing.hasParkourSafeBodyBlocks()) {
                     recordParkourEdgeRejected("landing")
                     continue
@@ -381,24 +480,35 @@ interface AStarPathBuilder {
         }
     }
 
-    private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesDiagonal(position: Vec3i) {
+    private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesDiagonal(
+        position: Vec3i,
+        bounds: BlockPathSearchBounds?
+    ) {
         val pos = BlockPos.MutableBlockPos()
         for (direction in diagonalDirections) {
-            val adjacentPosition = resolveNavigableNeighbor(position, direction, allowClimbable = false)
+            val adjacentPosition = resolveNavigableNeighbor(position, direction, allowClimbable = false, bounds = bounds)
             if (adjacentPosition != null &&
                 pos.set(position.x + direction.x, adjacentPosition.y, position.z).isBodyPassable() &&
                 pos.set(position.x, adjacentPosition.y, position.z + direction.z).isBodyPassable() &&
-                isDiagonalStepUpAllowed(position, direction, adjacentPosition)
+                isDiagonalStepUpAllowed(position, direction, adjacentPosition, bounds)
             ) {
                 add(WeightedEdge(adjacentPosition, position.walkCostTo(adjacentPosition)))
             }
         }
     }
 
-    private fun resolveNavigableNeighbor(position: Vec3i, direction: Vec3i, allowClimbable: Boolean): BlockPos? {
+    private fun resolveNavigableNeighbor(
+        position: Vec3i,
+        direction: Vec3i,
+        allowClimbable: Boolean,
+        bounds: BlockPathSearchBounds?
+    ): BlockPos? {
         val pos = BlockPos.MutableBlockPos()
         for (offsetY in verticalNeighborOffsets()) {
             val adjacentPosition = pos.set(position.x + direction.x, position.y + offsetY, position.z + direction.z)
+            if (!bounds.containsOrUnbounded(adjacentPosition)) {
+                continue
+            }
             if (adjacentPosition.isStandable || allowClimbable && adjacentPosition.isClimbableNode) {
                 return adjacentPosition.immutable()
             }
@@ -417,15 +527,50 @@ interface AStarPathBuilder {
         }
     }
 
-    private fun isDiagonalStepUpAllowed(position: Vec3i, direction: Vec3i, adjacentPosition: Vec3i): Boolean {
+    private fun isDiagonalStepUpAllowed(
+        position: Vec3i,
+        direction: Vec3i,
+        adjacentPosition: Vec3i,
+        bounds: BlockPathSearchBounds?
+    ): Boolean {
         if (adjacentPosition.y <= position.y) {
             return true
         }
 
-        val xAdjacent = resolveNavigableNeighbor(position, Vec3i(direction.x, 0, 0), allowClimbable = false)
-        val zAdjacent = resolveNavigableNeighbor(position, Vec3i(0, 0, direction.z), allowClimbable = false)
+        val xAdjacent = resolveNavigableNeighbor(
+            position,
+            Vec3i(direction.x, 0, 0),
+            allowClimbable = false,
+            bounds = bounds
+        )
+        val zAdjacent = resolveNavigableNeighbor(
+            position,
+            Vec3i(0, 0, direction.z),
+            allowClimbable = false,
+            bounds = bounds
+        )
 
         return xAdjacent?.y == adjacentPosition.y && zAdjacent?.y == adjacentPosition.y
+    }
+
+    private fun isWalkableParkourMidpoint(
+        position: Vec3i,
+        direction: Vec3i,
+        bounds: BlockPathSearchBounds?
+    ): Boolean {
+        val pos = BlockPos.MutableBlockPos()
+        for (offsetY in 0..maxStepUp) {
+            val midpoint = pos.set(position.x + direction.x, position.y + offsetY, position.z + direction.z)
+            if (bounds.containsOrUnbounded(midpoint) && midpoint.isStandable) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private fun BlockPathSearchBounds?.containsOrUnbounded(position: Vec3i): Boolean {
+        return this == null || contains(position)
     }
 
     private fun isParkourJumpEdge(previous: Vec3i, next: Vec3i): Boolean {

@@ -110,6 +110,36 @@ class GraphSearchTest {
     }
 
     @Test
+    fun `reports max iterations and exhausted exits distinctly`() {
+        val graph = mapOf(
+            "S" to listOf(WeightedEdge("A", 1.0)),
+            "A" to listOf(WeightedEdge("B", 1.0)),
+            "B" to listOf(WeightedEdge("G", 1.0)),
+        )
+
+        val limited = aStarShortestPathResult(
+            start = "S",
+            isGoal = { it == "G" },
+            neighbors = { graph[it].orEmpty() },
+            heuristic = objectDoubleMapOf(),
+            maxIterations = 2,
+        )
+        assertNull(limited.path)
+        assertEquals(PathSearchExitReason.MAX_ITERATIONS, limited.stats.exitReason)
+        assertEquals(2, limited.stats.iterations)
+
+        val exhausted = aStarShortestPathResult(
+            start = "S",
+            isGoal = { it == "missing" },
+            neighbors = { graph[it].orEmpty() },
+            heuristic = objectDoubleMapOf(),
+            maxIterations = 20,
+        )
+        assertNull(exhausted.path)
+        assertEquals(PathSearchExitReason.EXHAUSTED, exhausted.stats.exitReason)
+    }
+
+    @Test
     fun `respects maxCost and prunes expensive routes`() {
         val graph = mapOf(
             "S" to listOf(WeightedEdge("A", 2.0)),
@@ -348,6 +378,33 @@ class GraphSearchTest {
     }
 
     @Test
+    fun `bounded grid search reaches goal and rejects out of bounds distractor`() {
+        val start = GridCell(0, 0)
+        val goal = GridCell(3, 0)
+        val distractor = GridCell(50, 0)
+        val bounds = -1..4
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it == goal },
+            neighbors = { cell ->
+                listOf(
+                    WeightedEdge(GridCell(cell.x + 1, cell.z), 1.0),
+                    WeightedEdge(distractor, 0.1),
+                ).filter { it.node.x in bounds && it.node.z in bounds }
+            },
+            heuristic = { cell -> cell.manhattanDistance(goal).toDouble() },
+            maxIterations = 20,
+            maxCost = 20.0,
+        )
+
+        val path = assertNotNull(result)
+        assertEquals(goal, path.nodes.last())
+        assertNull(path.nodes.firstOrNull { it == distractor })
+    }
+
+
+    @Test
     fun `grid search chooses reachable nearest goal among multiple goals`() {
         val start = GridCell(1, 0)
         val goals = setOf(GridCell(4, 2), GridCell(1, 2))
@@ -535,6 +592,41 @@ class GraphSearchTest {
     }
 
     @Test
+    fun `parkour enabled routes from one block farther before missing-block course`() {
+        val start = ParkourGridCell(-1, 0, 0)
+        val launch = ParkourGridCell(0, 0, 0)
+        val firstLanding = ParkourGridCell(2, 1, 0)
+        val secondLanding = ParkourGridCell(4, 2, 0)
+        val goal = ParkourGridCell(6, 3, 0)
+        val standable = setOf(start, launch, firstLanding, secondLanding, goal)
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it == goal },
+            neighbors = { cell ->
+                cell.parkourNeighbors(
+                    standable = standable,
+                    parkourEnabled = true,
+                    rejectWalkableMidpoint = true,
+                )
+            },
+            heuristic = { cell -> cell.manhattanDistance(goal).toDouble() },
+            maxIterations = 100,
+            maxCost = 50.0,
+        )
+
+        val path = assertNotNull(result)
+        assertEquals(listOf(start, launch, firstLanding, secondLanding, goal), path.nodes)
+        val hasParkourStep = path.nodes.zipWithNext().any { (previous, next) ->
+            isConservativeParkourJumpEdge(
+                previous = net.minecraft.core.BlockPos(previous.x, previous.y, previous.z),
+                next = net.minecraft.core.BlockPos(next.x, next.y, next.z),
+            )
+        }
+        assertEquals(true, hasParkourStep)
+    }
+
+    @Test
     fun `parkour enabled routes through multi step raised missing-block course`() {
         val start = ParkourGridCell(0, 0, 0)
         val firstLanding = ParkourGridCell(2, 1, 0)
@@ -573,6 +665,38 @@ class GraphSearchTest {
 
         val path = assertNotNull(result)
         assertEquals(listOf(start, goal), path.nodes)
+    }
+
+    @Test
+    fun `parkour rejects same height walkable midpoint shortcut`() {
+        val start = ParkourGridCell(0, 0, 0)
+        val midpoint = ParkourGridCell(1, 0, 0)
+        val goal = ParkourGridCell(2, 0, 0)
+        val standable = setOf(start, midpoint, goal)
+
+        val neighbors = start.parkourNeighbors(
+            standable = standable,
+            parkourEnabled = true,
+            rejectWalkableMidpoint = true,
+        )
+
+        assertEquals(listOf(WeightedEdge(midpoint, 1.0)), neighbors)
+    }
+
+    @Test
+    fun `parkour allows lower midpoint below raised gap`() {
+        val start = ParkourGridCell(0, 0, 0)
+        val lowerMidpoint = ParkourGridCell(1, -1, 0)
+        val goal = ParkourGridCell(2, 1, 0)
+        val standable = setOf(start, lowerMidpoint, goal)
+
+        val neighbors = start.parkourNeighbors(
+            standable = standable,
+            parkourEnabled = true,
+            rejectWalkableMidpoint = true,
+        )
+
+        assertEquals(listOf(WeightedEdge(goal, 9.0)), neighbors)
     }
 
     @Test
@@ -707,6 +831,7 @@ class GraphSearchTest {
             hazardous: Set<ParkourGridCell> = emptySet(),
             blockedHeadroom: Set<ParkourGridCell> = emptySet(),
             blockedTransit: Set<ParkourGridCell> = emptySet(),
+            rejectWalkableMidpoint: Boolean = false,
         ): List<WeightedEdge<ParkourGridCell>> {
             val walkNeighbors = listOf(
                 copy(x = x - 1),
@@ -733,10 +858,14 @@ class GraphSearchTest {
             )
                 .filter { landing ->
                     val transit = ParkourGridCell((x + landing.x) / 2, y, (z + landing.z) / 2)
+                    val walkableMidpoint = (0..1).any { offsetY ->
+                        ParkourGridCell(transit.x, y + offsetY, transit.z) in standable
+                    }
                     landing in standable &&
                         landing !in hazardous &&
                         landing !in blockedHeadroom &&
                         transit !in blockedTransit &&
+                        (!rejectWalkableMidpoint || !walkableMidpoint) &&
                         isConservativeParkourJumpEdge(
                             previous = net.minecraft.core.BlockPos(x, y, z),
                             next = net.minecraft.core.BlockPos(landing.x, landing.y, landing.z),

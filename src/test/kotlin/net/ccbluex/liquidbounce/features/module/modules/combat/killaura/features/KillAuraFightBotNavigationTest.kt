@@ -240,6 +240,45 @@ class KillAuraFightBotNavigationTest {
     }
 
     @Test
+    fun `step up waypoint does not complete while airborne beside landing block`() {
+        assertFalse(
+            hasLandedFightBotStepUpWaypoint(
+                landingBlock = BlockPos(21, -59, -8),
+                playerBlock = BlockPos(21, -60, -7),
+                playerY = -59.58,
+                onGround = false,
+                waypointKind = BlockPathNodeKind.STEP_UP,
+            )
+        )
+    }
+
+    @Test
+    fun `step up waypoint completes after landing on expected block`() {
+        assertTrue(
+            hasLandedFightBotStepUpWaypoint(
+                landingBlock = BlockPos(21, -59, -8),
+                playerBlock = BlockPos(21, -59, -8),
+                playerY = -59.0,
+                onGround = true,
+                waypointKind = BlockPathNodeKind.STEP_UP,
+            )
+        )
+    }
+
+    @Test
+    fun `ordinary waypoint does not require step up landing`() {
+        assertTrue(
+            hasLandedFightBotStepUpWaypoint(
+                landingBlock = BlockPos(21, -59, -8),
+                playerBlock = BlockPos(21, -60, -7),
+                playerY = -59.58,
+                onGround = false,
+                waypointKind = BlockPathNodeKind.WALK,
+            )
+        )
+    }
+
+    @Test
     fun `step up vertical progress prevents immediate stuck replans`() {
         assertTrue(hasFightBotStepUpVerticalProgress(playerY = -59.58, bestWaypointY = -60.0))
         assertFalse(hasFightBotStepUpVerticalProgress(playerY = -59.57, bestWaypointY = -59.58))
@@ -561,6 +600,93 @@ class KillAuraFightBotNavigationTest {
                 currentTick = 220,
             )
         )
+    }
+
+    @Test
+    fun `search limited cooldown uses exact player block and short retry`() {
+        val targetBlock = BlockPos(20, -56, -15)
+        val playerBlock = BlockPos(20, -60, -5)
+        val route = nextFightBotSearchLimitedRoute(
+            targetId = 1,
+            targetBlock = targetBlock,
+            playerBlock = playerBlock,
+            parkourEnabled = true,
+            parkourSprintAllowed = true,
+            currentTick = 100,
+        )
+
+        assertEquals(110, route.retryTick)
+        assertTrue(
+            isFightBotSearchLimitedRouteCoolingDown(
+                route = route,
+                targetId = 1,
+                targetBlock = targetBlock,
+                playerBlock = playerBlock,
+                parkourEnabled = true,
+                parkourSprintAllowed = true,
+                currentTick = 109,
+            )
+        )
+        assertFalse(
+            isFightBotSearchLimitedRouteCoolingDown(
+                route = route,
+                targetId = 1,
+                targetBlock = targetBlock,
+                playerBlock = playerBlock,
+                parkourEnabled = true,
+                parkourSprintAllowed = true,
+                currentTick = 110,
+            )
+        )
+    }
+
+    @Test
+    fun `search limited cooldown invalidates when player block changes`() {
+        val targetBlock = BlockPos(20, -56, -15)
+        val playerBlock = BlockPos(20, -60, -5)
+        val route = FightBotSearchLimitedRoute(
+            targetId = 1,
+            targetBlock = targetBlock,
+            playerBlock = playerBlock,
+            parkourEnabled = true,
+            parkourSprintAllowed = true,
+            retryTick = 110,
+        )
+
+        assertFalse(
+            shouldInvalidateFightBotSearchLimitedRoute(
+                route = route,
+                targetId = 1,
+                targetBlock = targetBlock,
+                playerBlock = playerBlock,
+                parkourEnabled = true,
+                parkourSprintAllowed = true,
+            )
+        )
+        assertTrue(
+            shouldInvalidateFightBotSearchLimitedRoute(
+                route = route,
+                targetId = 1,
+                targetBlock = targetBlock,
+                playerBlock = BlockPos(20, -60, -6),
+                parkourEnabled = true,
+                parkourSprintAllowed = true,
+            )
+        )
+    }
+
+    @Test
+    fun `search bounds include start goals and vertical padding`() {
+        val bounds = fightBotPathSearchBounds(
+            start = BlockPos(20, -60, -5),
+            goals = listOf(BlockPos(19, -56, -12), BlockPos(23, -56, -15)),
+            horizontalPadding = 6,
+            maxStepUp = 1,
+            maxDropDown = 3,
+        )
+
+        assertEquals(BlockPos(13, -64, -21), BlockPos(bounds!!.minX, bounds.minY, bounds.minZ))
+        assertEquals(BlockPos(29, -53, 1), BlockPos(bounds.maxX, bounds.maxY, bounds.maxZ))
     }
 
     @Test
