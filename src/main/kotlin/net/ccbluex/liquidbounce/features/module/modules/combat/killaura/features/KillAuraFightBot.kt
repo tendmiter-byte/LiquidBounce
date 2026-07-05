@@ -52,8 +52,8 @@ import net.ccbluex.liquidbounce.utils.movement.DirectionalInput
 import net.ccbluex.liquidbounce.utils.movement.getDegreesRelativeToView
 import net.ccbluex.liquidbounce.utils.movement.getDirectionalInputForDegrees
 import net.ccbluex.liquidbounce.utils.navigation.NavigationBaseValueGroup
-import net.ccbluex.liquidbounce.utils.raytracing.PathfinderRaycast
-import net.ccbluex.liquidbounce.utils.raytracing.threadLocalPos
+import net.ccbluex.liquidbounce.utils.raytracing.pathfinder.DDARaycast
+import net.ccbluex.liquidbounce.utils.raytracing.pathfinder.threadLocalPos
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Vec3i
 import net.minecraft.core.registries.BuiltInRegistries
@@ -986,7 +986,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                 val rotation = Rotation(yaw = yaw.toFloat(), pitch = 0.0F)
                 val position = leaderPosition.fma(LeaderFollower.radius.toDouble(), rotation.directionVector)
 
-                val pathClear = PathfinderRaycast.hasLineOfSight(
+                val pathClear = DDARaycast.hasLineOfSight(
                     level = world,
                     startX = playerPosition.x, startY = playerPosition.y + 0.5, startZ = playerPosition.z,
                     endX = position.x, endY = position.y + 0.5, endZ = position.z,
@@ -1781,7 +1781,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         val end = target.eyePosition
 
         val diagnosticsStart = System.nanoTime()
-        val result = PathfinderRaycast.hasLineOfSight(
+        val result = DDARaycast.hasLineOfSight(
             level = world,
             startX = start.x, startY = start.y, startZ = start.z,
             endX = end.x, endY = end.y, endZ = end.z,
@@ -1795,7 +1795,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
     private fun hasStraightPath(start: Vec3, end: Vec3): Boolean {
         val diagnosticsStart = System.nanoTime()
-        val result = PathfinderRaycast.hasLineOfSight(
+        val result = DDARaycast.hasLineOfSight(
             level = world,
             startX = start.x, startY = start.y + 0.5, startZ = start.z,
             endX = end.x, endY = end.y + 0.5, endZ = end.z,

@@ -14,32 +14,53 @@
  * GNU General Public License for more details.
  */
 
-package net.ccbluex.liquidbounce.utils.raytracing
+package net.ccbluex.liquidbounce.utils.raytracing.pathfinder
 
 import net.minecraft.core.Direction
 
 /**
- * Mutable raycast hit result container for pathfinder checks.
+ * A mutable container holding the result of a 3D DDA voxel raycast operation.
  */
-class PathfinderHitResult {
+class DDAHitResult {
+    /**
+     * Whether the raycast hit a voxel that satisfied the solid criteria.
+     */
     var isHit: Boolean = false
         private set
 
+    /**
+     * The X coordinate of the hit voxel.
+     */
     var hitX: Int = 0
         private set
 
+    /**
+     * The Y coordinate of the hit voxel.
+     */
     var hitY: Int = 0
         private set
 
+    /**
+     * The Z coordinate of the hit voxel.
+     */
     var hitZ: Int = 0
         private set
 
+    /**
+     * The face of the voxel that the ray hit.
+     */
     var hitSide: Direction? = null
         private set
 
+    /**
+     * The squared distance from the starting position of the raycast to the hit position.
+     */
     var distanceSq: Double = 0.0
         private set
 
+    /**
+     * Sets the state of this hit result.
+     */
     fun set(hitX: Int, hitY: Int, hitZ: Int, hitSide: Direction?, distanceSq: Double) {
         this.isHit = true
         this.hitX = hitX
@@ -49,6 +70,9 @@ class PathfinderHitResult {
         this.distanceSq = distanceSq
     }
 
+    /**
+     * Resets this hit result to its default empty state.
+     */
     fun reset() {
         this.isHit = false
         this.hitX = 0
