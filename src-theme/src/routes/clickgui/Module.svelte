@@ -1,12 +1,16 @@
 <script lang="ts">
-    import {onMount} from "svelte";
+    import {onDestroy, onMount} from "svelte";
     import {
+        getTargetLockTemporaryTargets,
         getModuleSettings,
+        removeTargetLockTemporaryTarget,
         setModuleSettings,
         setModuleEnabled,
     } from "../../integration/rest";
-    import type {ConfigurableSetting, ModuleSetting} from "../../integration/types";
+    import type {ChoiceSetting, ConfigurableSetting, ModuleSetting, TargetLockTemporaryTarget} from "../../integration/types";
     import GenericSetting from "./setting/common/GenericSetting.svelte";
+    import RemovableItem from "./setting/common/RemovableItem.svelte";
+    import ExpandArrow from "./setting/common/ExpandArrow.svelte";
     import {slide} from "svelte/transition";
     import {quintOut} from "svelte/easing";
     import {description as descriptionStore, highlightModuleName} from "./clickgui_store";
@@ -23,15 +27,42 @@
     let moduleNameElement: HTMLElement;
     let configurable: ConfigurableSetting;
     const path = `clickgui.${name}`;
+    const staticTargetsPath = `${path}.adaptiveStaticTargets`;
     let expanded = false;
+    let mounted = false;
+    let staticTargetsExpanded = true;
     let hasSettings = false;
+    let temporaryTargets: TargetLockTemporaryTarget[] = [];
+    let temporaryTargetPollTimer: ReturnType<typeof setInterval> | null = null;
+    let targetLockModeSetting: ChoiceSetting | undefined;
+    let targetLockStaticFilterTypeSetting: ModuleSetting | undefined;
+    let targetLockStaticUsernamesSetting: ModuleSetting | undefined;
+    $: targetLockModeSetting = name === "TargetLock"
+        ? (configurable?.value.find((setting) => setting.name === "Mode" && setting.valueType === "CHOICE") as
+            ChoiceSetting | undefined)
+        : undefined;
+    $: showTemporaryTargets = targetLockModeSetting?.active === "Adaptive";
+    $: targetLockStaticFilterTypeSetting = showTemporaryTargets
+        ? (targetLockModeSetting?.choices?.Filter?.value as ModuleSetting[] | undefined)
+            ?.find((setting) => setting.name === "FilterType")
+        : undefined;
+    $: targetLockStaticUsernamesSetting = showTemporaryTargets
+        ? (targetLockModeSetting?.choices?.Filter?.value as ModuleSetting[] | undefined)
+            ?.find((setting) => setting.name === "Usernames")
+        : undefined;
 
     onMount(async () => {
+        staticTargetsExpanded = localStorage.getItem(staticTargetsPath) !== "false";
         await fetchModuleSettings();
 
         setTimeout(() => {
             expanded = localStorage.getItem(path) === "true"
         }, 500);
+        mounted = true;
+    });
+
+    onDestroy(() => {
+        stopTemporaryTargetPolling();
     });
 
     highlightModuleName.subscribe((m) => {
@@ -59,11 +90,77 @@
         }
     }
 
+    async function fetchTemporaryTargets() {
+        if (!showTemporaryTargets || !expanded) {
+            return;
+        }
+
+        try {
+            temporaryTargets = await getTargetLockTemporaryTargets();
+        } catch (err) {
+            console.error("Failed to fetch temporary targets", err);
+        }
+    }
+
+    function startTemporaryTargetPolling() {
+        if (temporaryTargetPollTimer !== null || !showTemporaryTargets) {
+            return;
+        }
+
+        fetchTemporaryTargets();
+        temporaryTargetPollTimer = setInterval(fetchTemporaryTargets, 1000);
+    }
+
+    function stopTemporaryTargetPolling() {
+        if (temporaryTargetPollTimer !== null) {
+            clearInterval(temporaryTargetPollTimer);
+            temporaryTargetPollTimer = null;
+        }
+
+        if (temporaryTargets.length > 0) {
+            temporaryTargets = [];
+        }
+    }
+
+    async function removeTemporaryTarget(username: string) {
+        try {
+            await removeTargetLockTemporaryTarget(username);
+            await fetchTemporaryTargets();
+        } catch (err) {
+            console.error("Failed to remove temporary target", err);
+        }
+    }
+
+    function formatRemainingTime(seconds: number) {
+        const remainingSeconds = Math.max(0, Math.ceil(seconds));
+        const minutes = Math.floor(remainingSeconds / 60);
+        const secondsPart = remainingSeconds % 60;
+
+        if (minutes <= 0) {
+            return `${secondsPart}s`;
+        }
+
+        return `${minutes}m ${secondsPart.toString().padStart(2, "0")}s`;
+    }
+
+    $: if (expanded && showTemporaryTargets) {
+        startTemporaryTargetPolling();
+    } else {
+        stopTemporaryTargetPolling();
+    }
+
+    $: if (mounted) {
+        setItem(staticTargetsPath, staticTargetsExpanded.toString());
+    }
+
     let refetchTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function updateModuleSettings() {
         try {
             await setModuleSettings(name, configurable);
+            if (showTemporaryTargets) {
+                await fetchTemporaryTargets();
+            }
             // Debounce the refetch so rapid slider changes (e.g. holding an arrow key)
             // don't fire a GET that races back and overwrites the current local value
             // with a stale one, causing the slider to snap back.
@@ -203,6 +300,54 @@
             {#each configurable.value as setting (setting.name)}
                 <GenericSetting {path} bind:setting on:change={updateModuleSettings}/>
             {/each}
+
+            {#if showTemporaryTargets}
+                {#if targetLockStaticFilterTypeSetting || targetLockStaticUsernamesSetting}
+                    <div class="target-lock-static-targets">
+                        <div class="target-lock-section-head">
+                            <div class="target-lock-section-title">Static Targets</div>
+                            <ExpandArrow bind:expanded={staticTargetsExpanded}/>
+                        </div>
+
+                        {#if staticTargetsExpanded}
+                            <div class="target-lock-section-body" transition:slide|global={{duration: 200, axis: "y"}}>
+                                {#if targetLockStaticFilterTypeSetting}
+                                    <GenericSetting
+                                            path={`${path}.Mode.Filter`}
+                                            setting={targetLockStaticFilterTypeSetting}
+                                            on:change={updateModuleSettings}
+                                    />
+                                {/if}
+                                {#if targetLockStaticUsernamesSetting}
+                                    <GenericSetting
+                                            path={`${path}.Mode.Filter`}
+                                            setting={targetLockStaticUsernamesSetting}
+                                            on:change={updateModuleSettings}
+                                    />
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
+
+                <div class="temporary-targets">
+                    <div class="target-lock-section-title">Temporary Targets</div>
+                    {#if temporaryTargets.length > 0}
+                        <div class="temporary-target-list">
+                            {#each temporaryTargets as target (target.username)}
+                                <RemovableItem on:remove={() => removeTemporaryTarget(target.username)}>
+                                    <div class="temporary-target">
+                                        <span class="temporary-target-name">{target.username}</span>
+                                        <span class="temporary-target-expiry">{formatRemainingTime(target.remainingSeconds)}</span>
+                                    </div>
+                                </RemovableItem>
+                            {/each}
+                        </div>
+                    {:else}
+                        <div class="temporary-target-empty">No temporary targets</div>
+                    {/if}
+                </div>
+            {/if}
         </div>
     {/if}
 </div>
@@ -249,6 +394,58 @@
       background-color: var(--clickgui-module-settings-background-color);
       border-left: solid 4px var(--clickgui-module-settings-border-color);
       padding: 0 11px 0 7px;
+    }
+
+    .target-lock-static-targets,
+    .temporary-targets {
+      padding: 7px 0 10px;
+    }
+
+    .target-lock-section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) max-content;
+      align-items: center;
+      margin-bottom: 7px;
+    }
+
+    .target-lock-section-title {
+      color: var(--clickgui-text-color);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .temporary-target-list {
+      display: flex;
+      flex-direction: column;
+      row-gap: 7px;
+    }
+
+    .temporary-target {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) max-content;
+      column-gap: 8px;
+      align-items: center;
+      width: 100%;
+      min-height: 25px;
+      padding: 4px 6px;
+      border-radius: 3px;
+      background-color: var(--clickgui-input-background-color);
+      border-bottom: solid 2px var(--clickgui-input-border-color);
+    }
+
+    .temporary-target-name {
+      color: var(--clickgui-text-color);
+      font-family: monospace;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .temporary-target-expiry,
+    .temporary-target-empty {
+      color: var(--clickgui-text-dimmed-color);
+      font-size: 12px;
     }
 
     &.has-settings {

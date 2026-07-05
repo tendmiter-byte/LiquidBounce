@@ -20,6 +20,7 @@
 package net.ccbluex.liquidbounce.integration.interop.protocol.rest.v1.client
 
 import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleTargetLock
@@ -59,8 +60,38 @@ private fun Routing.deleteTarget() = delete {
     }
 }
 
+private fun Routing.getTemporaryTargets() = get {
+    val targets = withContext(Dispatchers.Minecraft) {
+        ModuleTargetLock.temporaryTargets
+    }
+    val array = JsonArray()
+    targets.forEach { target ->
+        array.add(JsonObject().apply {
+            addProperty("username", target.username)
+            addProperty("remainingSeconds", target.remainingSeconds)
+        })
+    }
+    call.respond(array)
+}
+
+private fun Routing.deleteTemporaryTarget() = delete {
+    val body = call.receive<TargetRequest>()
+    val success = withContext(Dispatchers.Minecraft) {
+        ModuleTargetLock.removeTemporaryTarget(body.username)
+    }
+    if (success) {
+        call.respondNoContent()
+    } else {
+        call.forbidden("Player is not temporarily targeted")
+    }
+}
+
 internal fun Routing.targetLockRoutes() = route("/targets") {
     getTargets()
     postTarget()
     deleteTarget()
+    route("/temporary") {
+        getTemporaryTargets()
+        deleteTemporaryTarget()
+    }
 }

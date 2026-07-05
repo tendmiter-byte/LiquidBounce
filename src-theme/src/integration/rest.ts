@@ -23,6 +23,7 @@ import type {
     RegistryItem,
     Server,
     Session,
+    TargetLockTemporaryTarget,
     Theme,
     VirtualScreen,
     World
@@ -52,6 +53,23 @@ export async function getModule(name: string): Promise<Module> {
     const data = await response.json();
 
     return data;
+}
+
+export async function getTargetLockTemporaryTargets(): Promise<TargetLockTemporaryTarget[]> {
+    const response = await fetch(`${API_BASE}/client/targets/temporary`);
+    const data: TargetLockTemporaryTarget[] = await response.json();
+
+    return data;
+}
+
+export async function removeTargetLockTemporaryTarget(username: string) {
+    await fetch(`${API_BASE}/client/targets/temporary`, {
+        method: "DELETE",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({username})
+    });
 }
 
 export async function getModuleSettings(name: string): Promise<ConfigurableSetting> {

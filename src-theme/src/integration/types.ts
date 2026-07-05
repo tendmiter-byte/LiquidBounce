@@ -28,6 +28,11 @@ export interface Module {
     tag: string | null;
 }
 
+export interface TargetLockTemporaryTarget {
+    username: string;
+    remainingSeconds: number;
+}
+
 export interface GroupedModules {
     [category: string]: Module[]
 }
