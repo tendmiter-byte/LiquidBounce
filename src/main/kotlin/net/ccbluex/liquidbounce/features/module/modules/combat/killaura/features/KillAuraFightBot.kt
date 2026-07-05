@@ -32,6 +32,7 @@ import net.ccbluex.liquidbounce.render.engine.type.Color4b
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.block.AStarPathBuilder
 import net.ccbluex.liquidbounce.utils.block.BlockPath
+import net.ccbluex.liquidbounce.utils.block.BlockPathResult
 import net.ccbluex.liquidbounce.utils.client.logger
 import net.ccbluex.liquidbounce.utils.entity.doesCollideAt
 import net.ccbluex.liquidbounce.utils.entity.doesNotCollideBelow
@@ -101,11 +102,13 @@ private data class CachedCombatPath(
     var stagnantTicks: Int = 0,
 )
 
-private data class FailedCombatRoute(
+internal data class FightBotUnreachableRoute(
     val targetId: Int,
     val targetBlock: BlockPos,
-    val playerBlock: BlockPos,
-    val createdTick: Int,
+    val playerYBand: Int,
+    val originBlock: BlockPos,
+    val failures: Int,
+    val retryTick: Int,
 )
 
 private class FightBotDiagnosticsTrace(
@@ -133,6 +136,10 @@ private class FightBotDiagnosticsTrace(
     var selectedPathNodes = 0
     var selectedClimbablePathNodes = 0
     var noRouteCacheTicks = 0
+    var unreachableCooldownTicks = 0
+    var unreachableFailures = 0
+    var pathGoalCount = 0
+    var pathSearchMode = "none"
     var stuck = false
     var activeWaypointClimbable = false
     var selectedGoalBlock: BlockPos? = null
@@ -186,8 +193,74 @@ internal fun containsClimbableWaypoint(
     return (start..end).any { index -> isClimbable(nodes[index]) }
 }
 
+internal fun fightBotUnreachableCooldownTicks(failures: Int): Int {
+    return when {
+        failures <= 1 -> UNREACHABLE_FIRST_COOLDOWN_TICKS
+        failures == 2 -> UNREACHABLE_SECOND_COOLDOWN_TICKS
+        else -> UNREACHABLE_MAX_COOLDOWN_TICKS
+    }
+}
+
+internal fun fightBotUnreachableYBand(playerBlock: Vec3i): Int {
+    return Math.floorDiv(playerBlock.y, UNREACHABLE_Y_BAND_HEIGHT)
+}
+
+internal fun shouldInvalidateFightBotUnreachableRoute(
+    route: FightBotUnreachableRoute,
+    targetId: Int,
+    targetBlock: BlockPos,
+    playerBlock: BlockPos,
+): Boolean {
+    return route.targetId != targetId ||
+        route.targetBlock != targetBlock ||
+        route.playerYBand != fightBotUnreachableYBand(playerBlock) ||
+        route.originBlock.horizontalBlockDistanceSq(playerBlock) > UNREACHABLE_ORIGIN_RETRY_DISTANCE_SQ
+}
+
+internal fun isFightBotUnreachableRouteCoolingDown(
+    route: FightBotUnreachableRoute,
+    targetId: Int,
+    targetBlock: BlockPos,
+    playerBlock: BlockPos,
+    currentTick: Int,
+): Boolean {
+    if (shouldInvalidateFightBotUnreachableRoute(route, targetId, targetBlock, playerBlock)) {
+        return false
+    }
+
+    return currentTick < route.retryTick
+}
+
+internal fun nextFightBotUnreachableRoute(
+    previous: FightBotUnreachableRoute?,
+    targetId: Int,
+    targetBlock: BlockPos,
+    playerBlock: BlockPos,
+    currentTick: Int,
+): FightBotUnreachableRoute {
+    val canReusePrevious = previous != null &&
+        !shouldInvalidateFightBotUnreachableRoute(previous, targetId, targetBlock, playerBlock)
+    val failures = if (canReusePrevious) previous.failures + 1 else 1
+    val originBlock = if (canReusePrevious) previous.originBlock else playerBlock
+    val cooldownTicks = fightBotUnreachableCooldownTicks(failures)
+
+    return FightBotUnreachableRoute(
+        targetId = targetId,
+        targetBlock = targetBlock,
+        playerYBand = fightBotUnreachableYBand(playerBlock),
+        originBlock = originBlock,
+        failures = failures,
+        retryTick = currentTick + cooldownTicks,
+    )
+}
+
+private fun Vec3i.horizontalBlockDistanceSq(other: Vec3i): Int {
+    val x = this.x - other.x
+    val z = this.z - other.z
+    return x * x + z * z
+}
+
 private const val PATH_CACHE_TICKS = 40
-private const val FAILED_ROUTE_CACHE_TICKS = 10
 private const val PATH_MAX_COST = 40
 private const val MAX_PATHED_ATTACK_CANDIDATES = 8
 private const val WAYPOINT_REACHED_DISTANCE_SQ = 0.55 * 0.55
@@ -200,6 +273,13 @@ private const val BAD_GOAL_COST = 20.0
 private const val ATTACK_POSITION_STEP = 10
 private const val MIN_ATTACK_SLOT_RADIUS = 1.0
 private const val MAX_LOGGED_CANDIDATES = 32
+private const val UNREACHABLE_FIRST_COOLDOWN_TICKS = 40
+private const val UNREACHABLE_SECOND_COOLDOWN_TICKS = 80
+private const val UNREACHABLE_MAX_COOLDOWN_TICKS = 160
+private const val UNREACHABLE_Y_BAND_HEIGHT = 4
+private const val UNREACHABLE_ORIGIN_RETRY_DISTANCE = 12
+private const val UNREACHABLE_ORIGIN_RETRY_DISTANCE_SQ =
+    UNREACHABLE_ORIGIN_RETRY_DISTANCE * UNREACHABLE_ORIGIN_RETRY_DISTANCE
 
 /**
  * A fight bot that handles combat and movement automatically
@@ -219,7 +299,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
     private val directRange by float("DirectRange", 4f, 1f..10f)
 
     private var cachedCombatPath: CachedCombatPath? = null
-    private var failedCombatRoute: FailedCombatRoute? = null
+    private var unreachableCombatRoute: FightBotUnreachableRoute? = null
     private var activeWaypoint: Vec3? = null
     private var activeWaypointBlock: Vec3i? = null
     private var activeWaypointClimbable = false
@@ -329,6 +409,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
         if (LeaderFollower.running && LeaderFollower.username.isNotEmpty()) {
             clearCombatPath()
+            unreachableCombatRoute = null
             val leader = world.players().find { it.gameProfile.name == LeaderFollower.username }
             activeDiagnostics?.selectedMode = "leader"
             return leader?.let { calculateLeaderGoalPosition(it.position(), context.playerPosition) }
@@ -336,6 +417,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
         val combatTarget = context.combatTarget ?: run {
             clearCombatPath()
+            unreachableCombatRoute = null
             activeDiagnostics?.selectedMode = "noTarget"
             return null
         }
@@ -462,7 +544,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             return it
         }
 
-        if (tryUseFailedRouteCache(combatTarget)) {
+        if (tryUseUnreachableRouteCache(combatTarget)) {
             return null
         }
 
@@ -471,7 +553,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         }
 
         clearCombatPath()
-        cacheFailedRoute(combatTarget)
+        cacheUnreachableRoute(combatTarget)
         activeDiagnostics?.apply {
             selectedMode = "attackNoRoute"
             selectedGoalBlock = combatTarget.entity.blockPosition()
@@ -503,37 +585,55 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
         return followCachedCombatPath(cachedPath, context.playerPosition)
     }
 
-    private fun tryUseFailedRouteCache(combatTarget: CombatTarget): Boolean {
-        val failedRoute = failedCombatRoute ?: return false
-        val remainingTicks = FAILED_ROUTE_CACHE_TICKS - (player.tickCount - failedRoute.createdTick)
-        val reusable = remainingTicks > 0 &&
-            failedRoute.targetId == combatTarget.entity.id &&
-            failedRoute.targetBlock == combatTarget.entity.blockPosition() &&
-            failedRoute.playerBlock == player.blockPosition()
+    private fun tryUseUnreachableRouteCache(combatTarget: CombatTarget): Boolean {
+        val unreachableRoute = unreachableCombatRoute ?: return false
+        val targetBlock = combatTarget.entity.blockPosition()
+        val playerBlock = player.blockPosition()
 
-        if (!reusable) {
-            failedCombatRoute = null
+        if (shouldInvalidateFightBotUnreachableRoute(
+                route = unreachableRoute,
+                targetId = combatTarget.entity.id,
+                targetBlock = targetBlock,
+                playerBlock = playerBlock
+            )
+        ) {
+            unreachableCombatRoute = null
+            return false
+        }
+
+        val remainingTicks = unreachableRoute.retryTick - player.tickCount
+        if (remainingTicks <= 0) {
             return false
         }
 
         clearCombatPath()
         activeDiagnostics?.apply {
-            cacheState = "noRoute"
+            cacheState = "unreachable"
             selectedMode = "attackNoRouteCached"
-            selectedGoalBlock = failedRoute.targetBlock
+            selectedGoalBlock = unreachableRoute.targetBlock
             noRouteCacheTicks = remainingTicks
+            unreachableCooldownTicks = remainingTicks
+            unreachableFailures = unreachableRoute.failures
         }
         return true
     }
 
-    private fun cacheFailedRoute(combatTarget: CombatTarget) {
-        failedCombatRoute = FailedCombatRoute(
+    private fun cacheUnreachableRoute(combatTarget: CombatTarget) {
+        val route = nextFightBotUnreachableRoute(
+            previous = unreachableCombatRoute,
             targetId = combatTarget.entity.id,
             targetBlock = combatTarget.entity.blockPosition(),
             playerBlock = player.blockPosition(),
-            createdTick = player.tickCount,
+            currentTick = player.tickCount,
         )
-        activeDiagnostics?.noRouteCacheTicks = FAILED_ROUTE_CACHE_TICKS
+        unreachableCombatRoute = route
+
+        val cooldownTicks = route.retryTick - player.tickCount
+        activeDiagnostics?.apply {
+            noRouteCacheTicks = cooldownTicks
+            unreachableCooldownTicks = cooldownTicks
+            unreachableFailures = route.failures
+        }
     }
 
     private fun findBestAttackRoute(context: CombatContext, combatTarget: CombatTarget): AttackRoute? {
@@ -549,26 +649,37 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
                 .minWithOrNull(attackRouteComparator())
                 ?.let { return it }
 
-            val startPos = player.blockPosition()
-            return candidates
+            val pathCandidates = candidates
                 .asSequence()
                 .filter { it.playerDistanceSq <= pathfindingRange.sq() }
                 .sortedWith(pathCandidateComparator())
                 .take(MAX_PATHED_ATTACK_CANDIDATES)
-                .mapNotNull { candidate ->
-                    val path = findMeasuredPath(startPos, candidate.blockPos)
-                    if (path == null || path.nodes.isEmpty()) {
-                        return@mapNotNull null
-                    }
+                .toList()
 
-                    AttackRoute(
-                        candidate = candidate,
-                        path = path,
-                        cost = path.totalCost,
-                        penalized = isGoalPenalized(candidate.blockPos)
-                    )
-                }
-                .minWithOrNull(attackRouteComparator())
+            if (pathCandidates.isEmpty()) {
+                return null
+            }
+
+            val pathResult = findMeasuredPathToAny(
+                start = player.blockPosition(),
+                goals = pathCandidates.map { it.blockPos }
+            ) ?: return null
+
+            if (pathResult.nodes.isEmpty()) {
+                return null
+            }
+
+            val candidate = pathCandidates.firstOrNull {
+                it.blockPos == pathResult.reachedGoal || it.blockPos.closerThan(pathResult.reachedGoal, stopRange)
+            } ?: return null
+            val path = BlockPath(pathResult.nodes, pathResult.totalCost)
+
+            return AttackRoute(
+                candidate = candidate,
+                path = path,
+                cost = path.totalCost,
+                penalized = isGoalPenalized(candidate.blockPos)
+            )
         } finally {
             activeDiagnostics?.routeSelectionNs =
                 activeDiagnostics?.routeSelectionNs?.plus(System.nanoTime() - diagnosticsStart) ?: 0L
@@ -677,7 +788,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             createdTick = player.tickCount,
         )
         cachedCombatPath = cachedPath
-        failedCombatRoute = null
+        unreachableCombatRoute = null
         val climbableNodes = cachedPath.nodes.filter(::isClimbablePathNode)
         activeDiagnostics?.apply {
             selectedMode = if (route.path == null) "directAttack" else "pathAttack"
@@ -828,9 +939,34 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
     private fun findMeasuredPath(start: Vec3i, end: Vec3i): BlockPath? {
         val diagnosticsStart = System.nanoTime()
-        activeDiagnostics?.pathRequests = activeDiagnostics?.pathRequests?.plus(1) ?: 0
+        activeDiagnostics?.apply {
+            pathRequests++
+            pathGoalCount++
+            pathSearchMode = "singleGoal"
+        }
 
         val path = findPathResult(start, end, PATH_MAX_COST)
+        activeDiagnostics?.apply {
+            pathfindingNs += System.nanoTime() - diagnosticsStart
+            if (path == null || path.nodes.isEmpty()) {
+                pathFailures++
+            } else {
+                pathSuccesses++
+            }
+        }
+
+        return path
+    }
+
+    private fun findMeasuredPathToAny(start: Vec3i, goals: List<Vec3i>): BlockPathResult? {
+        val diagnosticsStart = System.nanoTime()
+        activeDiagnostics?.apply {
+            pathRequests++
+            pathGoalCount += goals.size
+            pathSearchMode = "multiGoal"
+        }
+
+        val path = findPathToAnyResult(start, goals, PATH_MAX_COST)
         activeDiagnostics?.apply {
             pathfindingNs += System.nanoTime() - diagnosticsStart
             if (path == null || path.nodes.isEmpty()) {
@@ -944,6 +1080,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             addProperty("mode", trace.selectedMode)
             addProperty("cache", trace.cacheState)
             addProperty("stuck", trace.stuck)
+            addProperty("pathSearchMode", trace.pathSearchMode)
             add("timings", trace.toTimingJson())
             add("counts", trace.toCountJson())
             add("player", createEntityPositionJson(player))
@@ -990,6 +1127,9 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
             addProperty("selectedPathNodes", selectedPathNodes)
             addProperty("selectedClimbablePathNodes", selectedClimbablePathNodes)
             addProperty("noRouteCacheTicks", noRouteCacheTicks)
+            addProperty("unreachableCooldownTicks", unreachableCooldownTicks)
+            addProperty("unreachableFailures", unreachableFailures)
+            addProperty("pathGoalCount", pathGoalCount)
         }
     }
 

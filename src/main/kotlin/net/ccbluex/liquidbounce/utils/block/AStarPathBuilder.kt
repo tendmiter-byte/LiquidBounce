@@ -21,19 +21,31 @@ package net.ccbluex.liquidbounce.utils.block
 
 import net.ccbluex.liquidbounce.utils.client.player
 import net.ccbluex.liquidbounce.utils.client.world
+import net.ccbluex.liquidbounce.utils.entity.getBoundingBoxAt
 import net.ccbluex.liquidbounce.utils.math.allEmpty
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Vec3i
+import net.minecraft.tags.BlockTags
+import net.minecraft.world.level.block.Blocks
 import net.minecraft.world.level.block.BaseFireBlock
 import net.minecraft.world.level.block.CactusBlock
 import net.minecraft.world.level.block.CampfireBlock
+import net.minecraft.world.level.block.LadderBlock
 import net.minecraft.world.level.block.MagmaBlock
 import net.minecraft.world.level.block.SweetBerryBushBlock
+import net.minecraft.world.level.block.TrapDoorBlock
 import net.minecraft.world.level.block.WitherRoseBlock
 import net.minecraft.world.phys.AABB
+import net.minecraft.world.phys.Vec3
 import kotlin.math.sqrt
 
 data class BlockPath(
+    val nodes: List<Vec3i>,
+    val totalCost: Double,
+)
+
+data class BlockPathResult(
+    val reachedGoal: Vec3i,
     val nodes: List<Vec3i>,
     val totalCost: Double,
 )
@@ -55,6 +67,8 @@ private val diagonalDirections = arrayOf(
 interface AStarPathBuilder {
 
     val allowDiagonal: Boolean
+
+    val allowClimbableNavigation: Boolean get() = false
 
     val maxIterations: Int get() = 500
 
@@ -87,7 +101,7 @@ interface AStarPathBuilder {
     }
 
     private fun Vec3i.isBodyPassable(): Boolean {
-        val box = AABB(x.toDouble(), y.toDouble(), z.toDouble(), x + 1.0, y + 2.0, z + 1.0)
+        val box = player.getBoundingBoxAt(Vec3(x + 0.5, y.toDouble(), z + 0.5))
 
         return world.getBlockCollisions(player, box).allEmpty()
     }
@@ -98,47 +112,90 @@ interface AStarPathBuilder {
         return !world.getBlockCollisions(player, floorBox).allEmpty()
     }
 
+    private fun Vec3i.hasSafeBodyBlocks(checkFloor: Boolean): Boolean {
+        val mutablePos = BlockPos.MutableBlockPos()
+        if (isHazardous(mutablePos.set(x, y, z)) ||
+            isHazardous(mutablePos.set(x, y + 1, z))
+        ) {
+            return false
+        }
+
+        if (checkFloor && isHazardous(mutablePos.set(x, y - 1, z))) {
+            return false
+        }
+
+        return true
+    }
+
     private val Vec3i.isStandable: Boolean
-        get() {
-            if (!isBodyPassable() || !hasFloor()) {
-                return false
-            }
+        get() = isBodyPassable() && hasFloor() && hasSafeBodyBlocks(checkFloor = true)
 
-            val mutablePos = BlockPos.MutableBlockPos()
-            if (isHazardous(mutablePos.set(x, y, z)) ||
-                isHazardous(mutablePos.set(x, y + 1, z)) ||
-                isHazardous(mutablePos.set(x, y - 1, z))
-            ) {
-                return false
-            }
+    private val Vec3i.isClimbableNode: Boolean
+        get() = allowClimbableNavigation &&
+            isClimbableBlock(this) &&
+            isBodyPassable() &&
+            hasSafeBodyBlocks(checkFloor = false)
 
+    fun isClimbablePathNode(position: Vec3i): Boolean {
+        return position.isClimbableNode
+    }
+
+    fun isClimbableBlock(position: Vec3i): Boolean {
+        val pos = BlockPos.MutableBlockPos(position.x, position.y, position.z)
+        val state = world.getBlockState(pos)
+
+        if (state.`is`(BlockTags.CLIMBABLE)) {
             return true
         }
+
+        if (state.block !is TrapDoorBlock || !state.getValue(TrapDoorBlock.OPEN)) {
+            return false
+        }
+
+        val belowState = world.getBlockState(pos.below())
+        return belowState.`is`(Blocks.LADDER) &&
+            belowState.getValue(LadderBlock.FACING) == state.getValue(TrapDoorBlock.FACING)
+    }
 
     fun findPath(start: Vec3i, end: Vec3i, maxCost: Int): List<Vec3i> {
         return findPathResult(start, end, maxCost)?.nodes ?: emptyList()
     }
 
     fun findPathResult(start: Vec3i, end: Vec3i, maxCost: Int): BlockPath? {
-        if (end.closerThan(start, stopRange)) {
-            return BlockPath(emptyList(), 0.0)
+        return findPathToAnyResult(start, listOf(end), maxCost)?.let { result ->
+            BlockPath(result.nodes, result.totalCost)
         }
+    }
+
+    fun findPathToAnyResult(start: Vec3i, goals: Collection<Vec3i>, maxCost: Int): BlockPathResult? {
+        val goalList = goals.distinct()
+        if (goalList.isEmpty()) {
+            return null
+        }
+
+        goalList.minByOrNull { it.distSqr(start) }
+            ?.takeIf { it.closerThan(start, stopRange) }
+            ?.let { return BlockPathResult(it, emptyList(), 0.0) }
 
         val shortestPath = aStarShortestPath(
             start = start,
-            isGoal = { it.closerThan(end, stopRange) },
+            isGoal = { position -> goalList.any { goal -> position.closerThan(goal, stopRange) } },
             neighbors = ::getAdjacentEdges,
-            heuristic = { sqrt(it.distSqr(end)) },
+            heuristic = { position -> goalList.minOf { goal -> sqrt(position.distSqr(goal)) } },
             maxIterations = maxIterations,
             maxCost = maxCost.toDouble(),
         ) ?: return null
 
+        val reachedNode = shortestPath.nodes.lastOrNull() ?: return null
+        val reachedGoal = goalList.minByOrNull { it.distSqr(reachedNode) } ?: return null
+
         // Exclude start node to preserve the original API contract.
-        return BlockPath(shortestPath.nodes.drop(1), shortestPath.totalCost)
+        return BlockPathResult(reachedGoal, shortestPath.nodes.drop(1), shortestPath.totalCost)
     }
 
     private fun getAdjacentEdges(position: Vec3i): List<WeightedEdge<Vec3i>> = buildList {
         getAdjacentNodesDirect(position)
+        getAdjacentNodesClimbable(position)
         if (allowDiagonal) {
             getAdjacentNodesDiagonal(position)
         }
@@ -146,17 +203,33 @@ interface AStarPathBuilder {
 
     private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesDirect(position: Vec3i) {
         for (direction in cardinalDirections) {
-            val adjacentPosition = resolveWalkableNeighbor(position, direction)
+            val adjacentPosition = resolveNavigableNeighbor(position, direction, allowClimbable = true)
             if (adjacentPosition != null) {
                 add(WeightedEdge(adjacentPosition, position.walkCostTo(adjacentPosition)))
             }
         }
     }
 
+    private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesClimbable(position: Vec3i) {
+        if (!allowClimbableNavigation || !position.isClimbableNode) {
+            return
+        }
+
+        val above = BlockPos(position.x, position.y + 1, position.z)
+        if (above.isClimbableNode || above.isStandable) {
+            add(WeightedEdge(above, CLIMB_UP_COST))
+        }
+
+        val below = BlockPos(position.x, position.y - 1, position.z)
+        if (below.isClimbableNode || below.isStandable) {
+            add(WeightedEdge(below, CLIMB_DOWN_COST))
+        }
+    }
+
     private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesDiagonal(position: Vec3i) {
         val pos = BlockPos.MutableBlockPos()
         for (direction in diagonalDirections) {
-            val adjacentPosition = resolveWalkableNeighbor(position, direction)
+            val adjacentPosition = resolveNavigableNeighbor(position, direction, allowClimbable = false)
             if (adjacentPosition != null &&
                 pos.set(position.x + direction.x, adjacentPosition.y, position.z).isBodyPassable() &&
                 pos.set(position.x, adjacentPosition.y, position.z + direction.z).isBodyPassable()
@@ -166,11 +239,11 @@ interface AStarPathBuilder {
         }
     }
 
-    private fun resolveWalkableNeighbor(position: Vec3i, direction: Vec3i): BlockPos? {
+    private fun resolveNavigableNeighbor(position: Vec3i, direction: Vec3i, allowClimbable: Boolean): BlockPos? {
         val pos = BlockPos.MutableBlockPos()
         for (offsetY in maxStepUp downTo -maxDropDown) {
             val adjacentPosition = pos.set(position.x + direction.x, position.y + offsetY, position.z + direction.z)
-            if (adjacentPosition.isStandable) {
+            if (adjacentPosition.isStandable || allowClimbable && adjacentPosition.isClimbableNode) {
                 return adjacentPosition.immutable()
             }
         }
@@ -192,5 +265,7 @@ interface AStarPathBuilder {
         private const val FLOOR_CHECK_DEPTH = 0.125
         private const val STEP_UP_COST = 0.5
         private const val DROP_DOWN_COST = 0.2
+        private const val CLIMB_UP_COST = 1.2
+        private const val CLIMB_DOWN_COST = 1.0
     }
 }

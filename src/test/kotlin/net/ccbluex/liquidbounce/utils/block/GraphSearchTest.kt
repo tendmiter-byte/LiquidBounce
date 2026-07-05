@@ -347,6 +347,113 @@ class GraphSearchTest {
         assertNull(result)
     }
 
+    @Test
+    fun `grid search chooses reachable nearest goal among multiple goals`() {
+        val start = GridCell(1, 0)
+        val goals = setOf(GridCell(4, 2), GridCell(1, 2))
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it in goals },
+            neighbors = { cell -> cell.walkableNeighbors(blocked = emptySet()) },
+            heuristic = { cell -> goals.minOf { goal -> cell.manhattanDistance(goal).toDouble() } },
+            maxIterations = 100,
+            maxCost = 20.0,
+        )
+
+        val path = assertNotNull(result)
+        assertEquals(start, path.nodes.first())
+        assertEquals(GridCell(1, 2), path.nodes.last())
+    }
+
+    @Test
+    fun `grid search returns null once when no goals are reachable`() {
+        val start = GridCell(1, 0)
+        val goals = setOf(GridCell(1, 2), GridCell(2, 2))
+        val blocked = (-2..4).mapTo(hashSetOf()) { x -> GridCell(x, 1) }
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it in goals },
+            neighbors = { cell -> cell.walkableNeighbors(blocked) },
+            heuristic = { cell -> goals.minOf { goal -> cell.manhattanDistance(goal).toDouble() } },
+            maxIterations = 100,
+            maxCost = 20.0,
+        )
+
+        assertNull(result)
+    }
+
+    @Test
+    fun `single goal grid search still reaches requested goal`() {
+        val start = GridCell(1, 0)
+        val goal = GridCell(3, 2)
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it == goal },
+            neighbors = { cell -> cell.walkableNeighbors(blocked = emptySet()) },
+            heuristic = { cell -> cell.manhattanDistance(goal).toDouble() },
+            maxIterations = 100,
+            maxCost = 20.0,
+        )
+
+        assertEquals(goal, assertNotNull(result).nodes.last())
+    }
+
+    @Test
+    fun `grid search reaches elevated target through climbable column`() {
+        val start = ClimbGridCell(0, 0, 0)
+        val goal = ClimbGridCell(2, 3, 0)
+        val standable = setOf(start, goal)
+        val climbable = setOf(
+            ClimbGridCell(1, 0, 0),
+            ClimbGridCell(1, 1, 0),
+            ClimbGridCell(1, 2, 0),
+            ClimbGridCell(1, 3, 0),
+        )
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it == goal },
+            neighbors = { cell -> cell.climbableNeighbors(standable, climbable) },
+            heuristic = { cell -> cell.manhattanDistance(goal).toDouble() },
+            maxIterations = 100,
+            maxCost = 20.0,
+        )
+
+        val path = assertNotNull(result)
+        assertEquals(start, path.nodes.first())
+        assertEquals(goal, path.nodes.last())
+        assertEquals(
+            listOf(
+                ClimbGridCell(1, 0, 0),
+                ClimbGridCell(1, 1, 0),
+                ClimbGridCell(1, 2, 0),
+                ClimbGridCell(1, 3, 0),
+            ),
+            path.nodes.filter { it in climbable }
+        )
+    }
+
+    @Test
+    fun `grid search cannot reach elevated target without climbable column`() {
+        val start = ClimbGridCell(0, 0, 0)
+        val goal = ClimbGridCell(2, 3, 0)
+        val standable = setOf(start, goal)
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it == goal },
+            neighbors = { cell -> cell.climbableNeighbors(standable, climbable = emptySet()) },
+            heuristic = { cell -> cell.manhattanDistance(goal).toDouble() },
+            maxIterations = 100,
+            maxCost = 20.0,
+        )
+
+        assertNull(result)
+    }
+
     private data class GridCell(val x: Int, val z: Int) {
 
         fun manhattanDistance(other: GridCell): Int {
@@ -364,6 +471,40 @@ class GraphSearchTest {
                 .filter { it.x in -2..4 && it.z in 0..2 && it !in blocked }
                 .map { WeightedEdge(it, 1.0) }
                 .toList()
+        }
+    }
+
+    private data class ClimbGridCell(val x: Int, val y: Int, val z: Int) {
+
+        fun manhattanDistance(other: ClimbGridCell): Int {
+            return abs(x - other.x) + abs(y - other.y) + abs(z - other.z)
+        }
+
+        fun climbableNeighbors(
+            standable: Set<ClimbGridCell>,
+            climbable: Set<ClimbGridCell>
+        ): List<WeightedEdge<ClimbGridCell>> {
+            val horizontal = listOf(
+                copy(x = x - 1),
+                copy(x = x + 1),
+                copy(z = z - 1),
+                copy(z = z + 1),
+            )
+                .filter { it in standable || it in climbable }
+                .map { WeightedEdge(it, 1.0) }
+
+            if (this !in climbable) {
+                return horizontal
+            }
+
+            val vertical = listOf(
+                copy(y = y + 1),
+                copy(y = y - 1),
+            )
+                .filter { it in standable || it in climbable }
+                .map { WeightedEdge(it, 1.2) }
+
+            return horizontal + vertical
         }
     }
 }
