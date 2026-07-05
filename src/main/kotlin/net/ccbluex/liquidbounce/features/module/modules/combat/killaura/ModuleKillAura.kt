@@ -53,8 +53,10 @@ import net.ccbluex.liquidbounce.features.module.modules.misc.debugrecorder.modes
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug.debugGeometry
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug.debugParameter
+import net.ccbluex.liquidbounce.render.drawLineStrip
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
 import net.ccbluex.liquidbounce.render.renderEnvironment
+import net.ccbluex.liquidbounce.render.utils.MutableVertexList
 import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.aiming.data.RotationWithVector
@@ -145,6 +147,18 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         event.renderEnvironment {
             renderFailedHits()
             KillAuraRangeIndicator.render(this, event.partialTicks)
+
+            if (KillAuraFightBot.running) {
+                KillAuraFightBot.currentPathNodes?.let { path ->
+                    if (path.isNotEmpty()) {
+                        drawLineStrip(
+                            argb = Color4b(0, 255, 0, 255).argb,
+                            positions = MutableVertexList(path.size)
+                                .addAllRelativeToCamera(path, camera) { it.center }
+                        )
+                    }
+                }
+            }
         }
     }
 

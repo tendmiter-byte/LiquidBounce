@@ -670,6 +670,10 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
     private val directRange by float("DirectRange", 4f, 1f..10f)
 
     private var cachedCombatPath: CachedCombatPath? = null
+
+    val currentPathNodes: List<Vec3i>?
+        get() = cachedCombatPath?.nodes
+
     private var unreachableCombatRoute: FightBotUnreachableRoute? = null
     private var searchLimitedCombatRoute: FightBotSearchLimitedRoute? = null
     private var activeWaypoint: Vec3? = null

@@ -22,8 +22,10 @@ package net.ccbluex.liquidbounce.utils.block
 import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap
 import net.ccbluex.liquidbounce.utils.client.player
 import net.ccbluex.liquidbounce.utils.client.world
+import net.ccbluex.liquidbounce.utils.entity.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.entity.getBoundingBoxAt
 import net.ccbluex.liquidbounce.utils.math.allEmpty
+import net.ccbluex.liquidbounce.utils.movement.DirectionalInput
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Vec3i
 import net.minecraft.tags.BlockTags
@@ -168,8 +170,8 @@ internal fun isConservativeParkourJumpEdge(previous: Vec3i, next: Vec3i, maxStep
     val dz = abs(next.z - previous.z)
     val dy = next.y - previous.y
 
-    return dy in 0..maxStepUp && (dx == PARKOUR_JUMP_BLOCK_DISTANCE && dz == 0 ||
-        dx == 0 && dz == PARKOUR_JUMP_BLOCK_DISTANCE)
+    return dy in 0..maxStepUp && (dx in 2..3 && dz == 0 ||
+        dx == 0 && dz in 2..3)
 }
 
 private val cardinalDirections = arrayOf(
@@ -204,14 +206,16 @@ interface DDAAStarPathBuilder {
 
     val maxDropDown: Int get() = 3
 
+    private fun isLava(pos: BlockPos): Boolean {
+        val fluid = world.getFluidState(pos)
+        return fluid.`is`(Fluids.LAVA) || fluid.`is`(Fluids.FLOWING_LAVA)
+    }
+
     private fun isHazardous(pos: BlockPos): Boolean {
         val state = world.getBlockState(pos)
         val block = state.block
 
-        val fluid = world.getFluidState(pos)
-        if (fluid.`is`(Fluids.LAVA) ||
-            fluid.`is`(Fluids.FLOWING_LAVA)
-        ) {
+        if (isLava(pos)) {
             return true
         }
 
@@ -293,9 +297,9 @@ interface DDAAStarPathBuilder {
     private fun Vec3i.hasParkourSafeBodyBlocks(): Boolean {
         val mutablePos = BlockPos.MutableBlockPos()
         return hasSafeBodyBlocks(checkFloor = true) &&
-            !hasFluid(mutablePos.set(x, y, z)) &&
-            !hasFluid(mutablePos.set(x, y + 1, z)) &&
-            !hasFluid(mutablePos.set(x, y - 1, z))
+            !isLava(mutablePos.set(x, y, z)) &&
+            !isLava(mutablePos.set(x, y + 1, z)) &&
+            !isLava(mutablePos.set(x, y - 1, z))
     }
 
     private val Vec3i.isStandable: Boolean
@@ -496,6 +500,67 @@ interface DDAAStarPathBuilder {
         }
     }
 
+    private fun simulateParkourJump(start: Vec3i, landing: Vec3i): Boolean {
+        val startPos = Vec3(start.x + 0.5, start.y.toDouble(), start.z + 0.5)
+        val dx = landing.x - start.x
+        val dz = landing.z - start.z
+        val yaw = Math.toDegrees(Math.atan2(-dx.toDouble(), dz.toDouble())).toFloat()
+
+        val input = SimulatedPlayer.SimulatedPlayerInput(
+            directionalInput = DirectionalInput.FORWARDS,
+            jumping = true,
+            sprinting = true,
+            sneaking = false
+        )
+
+        val simPlayer = SimulatedPlayer(
+            player = player,
+            input = input,
+            pos = startPos,
+            deltaMovement = Vec3.ZERO,
+            boundingBox = player.getBoundingBoxAt(startPos),
+            yRot = yaw,
+            xRot = 0f,
+            isSprinting = true,
+            fallDistance = 0.0,
+            jumpTriggerTime = 0,
+            jumping = true,
+            fallFlying = false,
+            onGround = true,
+            horizontalCollision = false,
+            verticalCollision = false,
+            wasTouchingWater = false,
+            isSwimming = false,
+            wasUnderwater = false,
+            fluidInteraction = player.fluidInteraction
+        )
+
+        for (tick in 1..20) {
+            if (tick > 1) {
+                input.keyPresses.jump = false
+            }
+
+            simPlayer.tick()
+
+            if (simPlayer.onGround) {
+                val currentX = kotlin.math.floor(simPlayer.pos.x).toInt()
+                val currentZ = kotlin.math.floor(simPlayer.pos.z).toInt()
+                if (currentX == landing.x && currentZ == landing.z && abs(simPlayer.pos.y - landing.y) < 0.5) {
+                    return true
+                }
+                if (tick > 2) {
+                    return false
+                }
+            }
+
+            if (simPlayer.pos.y < landing.y - 1.5) {
+                return false
+            }
+        }
+
+        return false
+    }
+
     private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesParkour(
         position: Vec3i,
         bounds: BlockPathSearchBounds?
@@ -505,45 +570,60 @@ interface DDAAStarPathBuilder {
         }
 
         for (direction in cardinalDirections) {
-            val gap = BlockPos(
-                position.x + direction.x,
-                position.y,
-                position.z + direction.z
-            )
-            if (!bounds.containsOrUnbounded(gap)) {
-                continue
-            }
-            if (isWalkableParkourMidpoint(position, direction, bounds)) {
-                recordParkourEdgeRejected("walkableMidpoint")
-                continue
-            }
-            if (!gap.isBodyPassableCached() || !gap.hasParkourSafeBodyBlocks()) {
-                recordParkourEdgeRejected("transit")
-                continue
-            }
-
-            for (offsetY in 0..maxStepUp) {
-                val landing = BlockPos(
-                    position.x + direction.x * PARKOUR_JUMP_BLOCK_DISTANCE,
-                    position.y + offsetY,
-                    position.z + direction.z * PARKOUR_JUMP_BLOCK_DISTANCE
-                )
-                if (!bounds.containsOrUnbounded(landing)) {
-                    continue
-                }
-                if (!landing.isStandable || !landing.hasParkourSafeBodyBlocks()) {
-                    recordParkourEdgeRejected("landing")
-                    continue
-                }
-
-                recordParkourEdgeCandidate(position, landing)
-                recordParkourEdgeAccepted(position, landing)
-                add(
-                    WeightedEdge(
-                        landing,
-                        position.parkourCostTo(landing) + getParkourEdgeExtraCost(position, landing)
+            for (jumpDist in 2..3) {
+                var transitSafe = true
+                for (d in 1 until jumpDist) {
+                    val gap = BlockPos(
+                        position.x + direction.x * d,
+                        position.y,
+                        position.z + direction.z * d
                     )
-                )
+                    if (!bounds.containsOrUnbounded(gap)) {
+                        transitSafe = false
+                        break
+                    }
+                    if (isWalkableParkourMidpoint(position, direction, d, bounds)) {
+                        transitSafe = false
+                        break
+                    }
+                    if (!gap.isBodyPassableCached() || !gap.hasParkourSafeBodyBlocks()) {
+                        transitSafe = false
+                        break
+                    }
+                }
+                if (!transitSafe) {
+                    recordParkourEdgeRejected("transit")
+                    continue
+                }
+
+                for (offsetY in 0..maxStepUp) {
+                    val landing = BlockPos(
+                        position.x + direction.x * jumpDist,
+                        position.y + offsetY,
+                        position.z + direction.z * jumpDist
+                    )
+                    if (!bounds.containsOrUnbounded(landing)) {
+                        continue
+                    }
+                    if (!landing.isStandable || !landing.hasParkourSafeBodyBlocks()) {
+                        recordParkourEdgeRejected("landing")
+                        continue
+                    }
+
+                    if (!simulateParkourJump(position, landing)) {
+                        recordParkourEdgeRejected("simulation")
+                        continue
+                    }
+
+                    recordParkourEdgeCandidate(position, landing)
+                    recordParkourEdgeAccepted(position, landing)
+                    add(
+                        WeightedEdge(
+                            landing,
+                            position.parkourCostTo(landing) + getParkourEdgeExtraCost(position, landing)
+                        )
+                    )
+                }
             }
         }
     }
@@ -565,6 +645,73 @@ interface DDAAStarPathBuilder {
         }
     }
 
+    private fun simulateMove(from: Vec3i, to: Vec3i): Boolean {
+        val startPos = Vec3(from.x + 0.5, from.y.toDouble(), from.z + 0.5)
+        val dx = to.x - from.x
+        val dz = to.z - from.z
+        val yaw = Math.toDegrees(Math.atan2(-dx.toDouble(), dz.toDouble())).toFloat()
+
+        val shouldJump = to.y > from.y
+
+        val input = SimulatedPlayer.SimulatedPlayerInput(
+            directionalInput = DirectionalInput.FORWARDS,
+            jumping = shouldJump,
+            sprinting = true,
+            sneaking = false
+        )
+
+        val simPlayer = SimulatedPlayer(
+            player = player,
+            input = input,
+            pos = startPos,
+            deltaMovement = Vec3.ZERO,
+            boundingBox = player.getBoundingBoxAt(startPos),
+            yRot = yaw,
+            xRot = 0f,
+            isSprinting = true,
+            fallDistance = 0.0,
+            jumpTriggerTime = 0,
+            jumping = shouldJump,
+            fallFlying = false,
+            onGround = true,
+            horizontalCollision = false,
+            verticalCollision = false,
+            wasTouchingWater = false,
+            isSwimming = false,
+            wasUnderwater = false,
+            fluidInteraction = player.fluidInteraction
+        )
+
+        for (tick in 1..12) {
+            if (tick > 1) {
+                input.keyPresses.jump = false
+            }
+
+            simPlayer.tick()
+
+            if (simPlayer.onGround) {
+                val currentX = kotlin.math.floor(simPlayer.pos.x).toInt()
+                val currentZ = kotlin.math.floor(simPlayer.pos.z).toInt()
+                if (currentX == to.x && currentZ == to.z && abs(simPlayer.pos.y - to.y) < 0.5) {
+                    return true
+                }
+                if (tick > 2) {
+                    return false
+                }
+            }
+
+            if (simPlayer.pos.y < to.y - 1.5) {
+                return false
+            }
+        }
+
+        return false
+    }
+
+    private fun isTransitionPassable(from: Vec3i, to: Vec3i): Boolean {
+        return simulateMove(from, to)
+    }
+
     private fun resolveNavigableNeighbor(
         position: Vec3i,
         direction: Vec3i,
@@ -578,7 +725,10 @@ interface DDAAStarPathBuilder {
                 continue
             }
             if (adjacentPosition.isStandable || allowClimbable && adjacentPosition.isClimbableNode) {
-                return adjacentPosition.immutable()
+                val neighbor = adjacentPosition.immutable()
+                if (isTransitionPassable(position, neighbor)) {
+                    return neighbor
+                }
             }
         }
 
@@ -624,12 +774,13 @@ interface DDAAStarPathBuilder {
     private fun isWalkableParkourMidpoint(
         position: Vec3i,
         direction: Vec3i,
+        offset: Int,
         bounds: BlockPathSearchBounds?
     ): Boolean {
         val pos = BlockPos.MutableBlockPos()
         for (offsetY in 0..maxStepUp) {
-            val midpoint = pos.set(position.x + direction.x, position.y + offsetY, position.z + direction.z)
-            if (bounds.containsOrUnbounded(midpoint) && midpoint.isStandable) {
+            val midpoint = pos.set(position.x + direction.x * offset, position.y + offsetY, position.z + direction.z * offset)
+            if (bounds.containsOrUnbounded(midpoint) && midpoint.isStandable && !hasFluid(midpoint)) {
                 return true
             }
         }
@@ -652,7 +803,13 @@ interface DDAAStarPathBuilder {
             else -> 0.0
         }
 
-        return sqrt(distSqr(other)) + verticalPenalty
+        val fluidPenalty = if (hasFluid(BlockPos(other.x, other.y, other.z))) {
+            WATER_PENALTY
+        } else {
+            0.0
+        }
+
+        return sqrt(distSqr(other)) + verticalPenalty + fluidPenalty
     }
 
     private fun Vec3i.parkourCostTo(other: Vec3i): Double {
@@ -660,12 +817,13 @@ interface DDAAStarPathBuilder {
     }
 
     companion object {
-        private const val FLOOR_CHECK_DEPTH = 0.125
+        private const val FLOOR_CHECK_DEPTH = 0.99
         private const val STEP_UP_COST = 0.5
         private const val DROP_DOWN_COST = 0.2
         private const val CLIMB_UP_COST = 1.2
         private const val CLIMB_DOWN_COST = 1.0
         private const val PARKOUR_JUMP_COST = 8.0
+        private const val WATER_PENALTY = 15.0
     }
 }
 
