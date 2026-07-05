@@ -125,20 +125,22 @@ class RangeLogic(val config: RangeValueGroup) : EventListener, MinecraftShortcut
         val base = config.baseRange
         val defaultRange = base + config.maxRangeIncrease
 
-        if (config.reachMode != RangeValueGroup.ReachMode.PROGRESSIVE || entity == null) {
-            return defaultRange
+        val r = if (config.reachMode != RangeValueGroup.ReachMode.PROGRESSIVE || entity == null) {
+            defaultRange
+        } else {
+            base + getProgressiveIncrease(entity)
         }
-
-        return base + getProgressiveIncrease(entity)
+        return r + 0.005f
     }
 
     fun getThroughWallsRangeFor(entity: Entity?): Float {
-        if (config.reachMode != RangeValueGroup.ReachMode.PROGRESSIVE || entity == null) {
-            return config.throughWallsRange
+        val r = if (config.reachMode != RangeValueGroup.ReachMode.PROGRESSIVE || entity == null) {
+            config.throughWallsRange
+        } else {
+            val cappedWallsRange = minOf(3.0f, config.throughWallsRange)
+            if (getProgressiveIncrease(entity) > 0f) config.throughWallsRange else cappedWallsRange
         }
-
-        val cappedWallsRange = minOf(3.0f, config.throughWallsRange)
-        return if (getProgressiveIncrease(entity) > 0f) config.throughWallsRange else cappedWallsRange
+        return r + 0.005f
     }
 
     fun getScanRangeFor(entity: Entity?): Float {
@@ -146,12 +148,13 @@ class RangeLogic(val config: RangeValueGroup) : EventListener, MinecraftShortcut
         val defaultRange = base + config.maxRangeIncrease
         val cappedWallsRange = minOf(3.0f, config.throughWallsRange)
 
-        if (config.reachMode != RangeValueGroup.ReachMode.PROGRESSIVE || entity == null) {
-            return maxOf(defaultRange, config.throughWallsRange)
-        }
-
-        return if (getProgressiveIncrease(entity) > 0f) maxOf(defaultRange, config.throughWallsRange)
+        val r = if (config.reachMode != RangeValueGroup.ReachMode.PROGRESSIVE || entity == null) {
+            maxOf(defaultRange, config.throughWallsRange)
+        } else {
+            if (getProgressiveIncrease(entity) > 0f) maxOf(defaultRange, config.throughWallsRange)
             else maxOf(base, cappedWallsRange)
+        }
+        return r + 0.005f
     }
 
     fun adjustAttackRange(attackRange: AttackRange = AttackRange.defaultFor(player)): AttackRange {
@@ -206,6 +209,6 @@ class RangeLogic(val config: RangeValueGroup) : EventListener, MinecraftShortcut
 
     fun isInRange(entity: Entity, pos: Vec3): Boolean {
         val dynamicRange = getInteractionRangeFor(entity)
-        return player.distanceToSqr(pos) <= dynamicRange * dynamicRange
+        return player.eyePosition.distanceToSqr(pos) <= dynamicRange * dynamicRange
     }
 }

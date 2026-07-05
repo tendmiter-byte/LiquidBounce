@@ -165,10 +165,11 @@ object CriticalsJump : Mode("Jump") {
     }
 
     private fun calculateTicksUntilNextCrit(): Float {
-        val durationToWait = player.currentItemAttackStrengthDelay * 0.9F - 0.5F
-        val waitedDuration = player.attackStrengthTicker.toFloat()
+        val delay = player.currentItemAttackStrengthDelay
+        val requiredTicker = Math.floor(0.9 * delay - 0.5).toInt() + 1
+        val waitedDuration = player.attackStrengthTicker
 
-        return (durationToWait - waitedDuration).coerceAtLeast(0.0f)
+        return (requiredTicker - waitedDuration).toFloat().coerceAtLeast(0.0f)
     }
 
     private fun getCooldownDamageFactor(player: Player, tickDelta: Float): Float {

@@ -50,7 +50,7 @@ open class RangeValueGroup(
      * @see net.minecraft.world.entity.player.Player.entityInteractionRange
      */
     val interactionRange: Float
-        get() = baseRange + maxRangeIncrease
+        get() = baseRange + maxRangeIncrease + 0.005f
 
     /**
      * Returns the range to use for vanilla entity detection (i.e. what gets returned by
@@ -66,7 +66,7 @@ open class RangeValueGroup(
         get() = interactionRange
 
     val interactionThroughWallsRange
-        get() = throughWallsRange
+        get() = throughWallsRange + 0.005f
 
     enum class ReachMode(override val tag: String) : net.ccbluex.liquidbounce.config.types.list.Tagged {
         STATIC("Static"),

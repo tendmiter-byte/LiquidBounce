@@ -270,7 +270,7 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         // Check if our target is in range, otherwise deal with auto block
         if (!isInRange) {
             if (KillAuraAutoBlock.enabled && KillAuraAutoBlock.onScanRange &&
-                player.squaredBoxedDistanceTo(target) <= range.getScanRangeFor(target).sq()) {
+                target.squaredBoxedDistanceTo(player) <= range.getScanRangeFor(target).sq()) {
                 if (KillAuraClicker.ticksSinceLastClick >= KillAuraAutoBlock.reblockTicks) {
                     KillAuraAutoBlock.startBlocking()
                 }

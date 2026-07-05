@@ -88,7 +88,9 @@ fun isLookingAtEntity(
     throughWallsRange: Double,
 ): EntityHitResult? {
     val cameraVec = fromEntity.eyePosition
-    val entityHitResult = fromEntity.findEntityInCrosshair(range, rotation) { entity ->
+    val traceRange = range + 0.005
+    val traceThroughWallsRange = throughWallsRange + 0.005
+    val entityHitResult = fromEntity.findEntityInCrosshair(traceRange, rotation) { entity ->
         entity == toEntity
     } ?: return null
 
@@ -96,7 +98,7 @@ fun isLookingAtEntity(
 
     // Either within through-walls range, or within normal range and has line of sight
     return entityHitResult.takeIf {
-        distance <= throughWallsRange.sq()
-            || distance <= range.sq() && hasLineOfSight(cameraVec, entityHitResult.location, fromEntity)
+        distance <= traceThroughWallsRange.sq()
+            || distance <= traceRange.sq() && hasLineOfSight(cameraVec, entityHitResult.location, fromEntity)
     }
 }
