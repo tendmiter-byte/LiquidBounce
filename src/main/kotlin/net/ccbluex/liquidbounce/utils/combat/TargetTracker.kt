@@ -42,6 +42,7 @@ import net.minecraft.world.entity.NeutralMob
 import net.minecraft.world.entity.monster.Enemy
 import net.minecraft.world.entity.player.Player
 import java.util.function.Predicate
+import kotlin.math.sqrt
 
 /**
  * A target tracker to choose the best enemy to attack
@@ -225,6 +226,15 @@ enum class TargetPriority(override val tag: String) : Tagged, Comparator<LivingE
     },
 
     /**
+     * Balanced health and distance score first
+     */
+    HEALTH_DISTANCE("HealthDistance") {
+        override fun compare(o1: LivingEntity, o2: LivingEntity): Int =
+            targetHealthDistancePriorityScore(o1.getActualHealth(), o1.squaredBoxedDistanceTo(player)) compareTo
+                targetHealthDistancePriorityScore(o2.getActualHealth(), o2.squaredBoxedDistanceTo(player))
+    },
+
+    /**
      * Closest to you first
      */
     DISTANCE("Distance") {
@@ -255,4 +265,10 @@ enum class TargetPriority(override val tag: String) : Tagged, Comparator<LivingE
         override fun compare(o1: LivingEntity, o2: LivingEntity): Int =
             o2.tickCount compareTo o1.tickCount
     },
+}
+
+internal fun targetHealthDistancePriorityScore(actualHealth: Float, squaredDistanceBlocks: Double): Double {
+    val safeSquaredDistance = squaredDistanceBlocks.coerceAtLeast(0.0)
+
+    return actualHealth.toDouble() + sqrt(safeSquaredDistance) * 0.5 + safeSquaredDistance * 0.03
 }
