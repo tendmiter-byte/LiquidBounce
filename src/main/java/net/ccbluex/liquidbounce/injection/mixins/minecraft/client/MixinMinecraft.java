@@ -19,7 +19,8 @@
 package net.ccbluex.liquidbounce.injection.mixins.minecraft.client;
 
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
-import com.llamalad7.mixinextras.injector.ModifyReceiver;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
 import com.llamalad7.mixinextras.sugar.Local;
 import com.mojang.blaze3d.platform.Window;
@@ -353,27 +354,32 @@ public abstract class MixinMinecraft {
         return original;
     }
 
-    @ModifyReceiver(
+    @WrapOperation(
         method = "startAttack",
         at = @At(
             value = "INVOKE",
             target = "Lnet/minecraft/world/item/component/AttackRange;isInRange(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/phys/Vec3;)Z"
         )
     )
-    private AttackRange injectReachAttackRange(AttackRange instance, LivingEntity entity, Vec3 pos) {
+    private boolean injectReachAttackRange(AttackRange instance, LivingEntity attacker, Vec3 pos, Operation<Boolean> original) {
         if (ModuleReach.INSTANCE.getRunning()) {
             Entity target = null;
             if (this.hitResult instanceof EntityHitResult entityHitResult) {
                 target = entityHitResult.getEntity();
             }
             if (target != null) {
-                return ModuleReach.INSTANCE.getEntity().adjustAttackRange(instance, target);
-            } else {
-                return ModuleReach.INSTANCE.getEntity().adjustAttackRange(instance);
+                double allowedRange = ModuleReach.INSTANCE.getEntity().getInteractionRangeFor(target);
+                if (!attacker.hasLineOfSight(target)) {
+                    allowedRange = ModuleReach.INSTANCE.getEntity().getThroughWallsRangeFor(target);
+                }
+                double distanceSqr = attacker.distanceToSqr(pos);
+                double hitboxMargin = instance.hitboxMargin();
+                double allowedReachWithMargin = allowedRange + hitboxMargin;
+                return distanceSqr <= allowedReachWithMargin * allowedReachWithMargin;
             }
         }
 
-        return instance;
+        return original.call(instance, attacker, pos);
     }
 
     @WrapWithCondition(method = "startAttack", at = @At(value = "FIELD",
