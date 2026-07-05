@@ -24,6 +24,7 @@ import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.MinecraftShortcuts
 import net.ccbluex.liquidbounce.utils.client.Chronometer
 import net.ccbluex.liquidbounce.utils.entity.squaredBoxedDistanceTo
+import net.ccbluex.liquidbounce.utils.math.RANGE_PRECISION_EPSILON
 import net.minecraft.core.component.DataComponents
 import net.minecraft.world.InteractionHand
 import net.minecraft.world.entity.Entity
@@ -36,6 +37,15 @@ import kotlin.math.min
 class RangeLogic(val config: RangeValueGroup) : EventListener, MinecraftShortcuts {
 
     override fun parent(): EventListener = config
+
+    val interactionRange: Float
+        get() = config.baseRange + config.maxRangeIncrease + RANGE_PRECISION_EPSILON
+
+    val effectiveInteractionRange: Float
+        get() = interactionRange
+
+    val interactionThroughWallsRange: Float
+        get() = config.throughWallsRange + RANGE_PRECISION_EPSILON
 
     class ReachComboTracker {
         var hits: Int = 0
@@ -130,7 +140,7 @@ class RangeLogic(val config: RangeValueGroup) : EventListener, MinecraftShortcut
         } else {
             base + getProgressiveIncrease(entity)
         }
-        return r + 0.005f
+        return r + RANGE_PRECISION_EPSILON
     }
 
     fun getThroughWallsRangeFor(entity: Entity?): Float {
@@ -140,7 +150,7 @@ class RangeLogic(val config: RangeValueGroup) : EventListener, MinecraftShortcut
             val cappedWallsRange = minOf(3.0f, config.throughWallsRange)
             if (getProgressiveIncrease(entity) > 0f) config.throughWallsRange else cappedWallsRange
         }
-        return r + 0.005f
+        return r + RANGE_PRECISION_EPSILON
     }
 
     fun getScanRangeFor(entity: Entity?): Float {
@@ -154,7 +164,7 @@ class RangeLogic(val config: RangeValueGroup) : EventListener, MinecraftShortcut
             if (getProgressiveIncrease(entity) > 0f) maxOf(defaultRange, config.throughWallsRange)
             else maxOf(base, cappedWallsRange)
         }
-        return r + 0.005f
+        return r + RANGE_PRECISION_EPSILON
     }
 
     fun adjustAttackRange(attackRange: AttackRange = AttackRange.defaultFor(player)): AttackRange {

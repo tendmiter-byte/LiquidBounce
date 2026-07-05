@@ -242,12 +242,12 @@ object KillAuraAutoBlock : ToggleableValueGroup(ModuleKillAura, "AutoBlocking", 
 
         // Check if we are in danger by going through all possible targets and checking if they are looking at us.
         isInDanger = targetTracker.targets().any { target ->
-            player.squaredBoxedDistanceTo(target) <= KillAuraRange.interactionRange.sq() && isLookingAtEntity(
+            player.squaredBoxedDistanceTo(target) <= KillAuraRange.logic.interactionRange.sq() && isLookingAtEntity(
                 fromEntity = target,
                 toEntity = player,
                 rotation = target.rotation,
-                range = range.interactionRange.toDouble(),
-                throughWallsRange = range.interactionThroughWallsRange.toDouble()
+                range = range.logic.interactionRange.toDouble(),
+                throughWallsRange = range.logic.interactionThroughWallsRange.toDouble()
             ) != null
         }
         debugParameter("IsInDanger") { isInDanger }
@@ -363,7 +363,7 @@ object KillAuraAutoBlock : ToggleableValueGroup(ModuleKillAura, "AutoBlocking", 
      */
     private fun interactWithFacing(rotation: Rotation, blockHand: InteractionHand): Boolean {
         val entityHitResult =
-            findEntityInCrosshair(range.interactionRange.toDouble(), rotation, predicate = {
+            findEntityInCrosshair(range.logic.interactionRange.toDouble(), rotation, predicate = {
                 when (raycast) {
                     TRACE_NONE -> false
                     TRACE_ONLYENEMY -> it.shouldBeAttacked()

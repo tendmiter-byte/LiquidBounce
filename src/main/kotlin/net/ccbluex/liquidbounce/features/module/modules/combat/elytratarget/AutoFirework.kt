@@ -64,7 +64,7 @@ internal object AutoFirework : ToggleableValueGroup(ModuleElytraTarget, "AutoFir
                 KillAura.clicker.isClickTick
                 && KillAura.targetTracker.target
                     ?.squaredBoxedDistanceTo(player)
-                    ?.takeIf { it >= KillAura.range.interactionRange.sq() } != null
+                    ?.takeIf { it >= KillAura.range.logic.interactionRange.sq() } != null
                 )
         ) {
             return true

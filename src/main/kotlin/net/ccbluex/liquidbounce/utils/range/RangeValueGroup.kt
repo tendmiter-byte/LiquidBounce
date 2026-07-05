@@ -20,19 +20,8 @@ package net.ccbluex.liquidbounce.utils.range
 
 import net.ccbluex.liquidbounce.config.types.group.ValueGroup
 import net.ccbluex.liquidbounce.event.EventListener
-import net.ccbluex.liquidbounce.event.events.PostAttackEntityEvent
-import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.MinecraftShortcuts
-import net.ccbluex.liquidbounce.utils.client.Chronometer
-import net.ccbluex.liquidbounce.utils.entity.squaredBoxedDistanceTo
-import net.minecraft.core.component.DataComponents
-import net.minecraft.world.InteractionHand
-import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.ai.attributes.Attributes
-import net.minecraft.world.item.ItemStack
-import net.minecraft.world.item.component.AttackRange
-import net.minecraft.world.phys.Vec3
-import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -45,28 +34,6 @@ open class RangeValueGroup(
 ) : ValueGroup(name), MinecraftShortcuts, EventListener {
 
     override fun parent(): EventListener? = base as? EventListener
-
-    /**
-     * @see net.minecraft.world.entity.player.Player.entityInteractionRange
-     */
-    val interactionRange: Float
-        get() = baseRange + maxRangeIncrease + 0.005f
-
-    /**
-     * Returns the range to use for vanilla entity detection (i.e. what gets returned by
-     * [net.minecraft.world.entity.player.Player.entityInteractionRange]).
-     *
-     * We return [interactionRange] globally even in [ReachMode.PROGRESSIVE].
-     * The actual hit check in startAttack uses adjustAttackRange, which gates the
-     * extra reach behind the combo/delay requirements via [getInteractionRangeFor].
-     * If we didn't extend the picking range upfront, the vanilla raytracer would cap
-     * at baseRange, and we could never hit the entity even if we had the combo.
-     */
-    val effectiveInteractionRange: Float
-        get() = interactionRange
-
-    val interactionThroughWallsRange
-        get() = throughWallsRange + 0.005f
 
     enum class ReachMode(override val tag: String) : net.ccbluex.liquidbounce.config.types.list.Tagged {
         STATIC("Static"),
@@ -98,7 +65,7 @@ open class RangeValueGroup(
         0f..8f,
         "blocks"
     ).onChange {
-        min(interactionRange, it)
+        min(baseRange + maxRangeIncrease, it)
     }
 
     internal var comboHits by int(
@@ -151,43 +118,5 @@ open class RangeValueGroup(
     val logic = RangeLogic(this)
 
     override fun children(): List<EventListener> = listOf(logic)
-
-    fun getInteractionRangeFor(entity: Entity?): Float = logic.getInteractionRangeFor(entity)
-
-    fun getThroughWallsRangeFor(entity: Entity?): Float = logic.getThroughWallsRangeFor(entity)
-
-    open fun getScanRangeFor(entity: Entity?): Float = logic.getScanRangeFor(entity)
-
-    /**
-     * Decreases the attack min-range.
-     *
-     * This is a placeholder until required.
-     * There is no vanilla item that is making use of this for now.
-     *
-     * The spear is executed on the server-side and only uses min range as a visual indicator.
-     * @see net.minecraft.client.Minecraft.startAttack
-     * @see net.minecraft.client.multiplayer.MultiPlayerGameMode.piercingAttack
-     */
-    // private val minRangeDecrease by float("MinRangeDecrease", 0f, 0f..2f, "blocks")
-
-    fun adjustAttackRange(attackRange: AttackRange = AttackRange.defaultFor(player)): AttackRange =
-        logic.adjustAttackRange(attackRange)
-
-    /**
-     * Entity-aware variant that respects [ReachMode.PROGRESSIVE].
-     * The increase applied is derived from [getInteractionRangeFor] rather than the
-     * raw [maxRangeIncrease], so the progressive combo-tracker is honoured.
-     */
-    fun adjustAttackRange(attackRange: AttackRange, entity: Entity): AttackRange =
-        logic.adjustAttackRange(attackRange, entity)
-
-    fun getAttackRange(itemStack: ItemStack = player.getItemInHand(InteractionHand.MAIN_HAND)) =
-        logic.getAttackRange(itemStack)
-
-    fun isInRange(itemStack: ItemStack = player.getItemInHand(InteractionHand.MAIN_HAND), pos: Vec3) =
-        logic.isInRange(itemStack, pos)
-
-    fun isInRange(entity: Entity, pos: Vec3): Boolean =
-        logic.isInRange(entity, pos)
 
 }

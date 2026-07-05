@@ -183,7 +183,7 @@ object VelocityReduce : VelocityMode("Reduce") {
             (if (canLag) {
                 lagTargetRange.start.toDouble()
             } else {
-                ModuleKillAura.range.interactionRange.toDouble()
+                ModuleKillAura.range.logic.interactionRange.toDouble()
             }),
             RotationManager.currentRotation ?: player.rotation
         ) { !it.isRemoved && it.shouldBeAttacked() }?.entity

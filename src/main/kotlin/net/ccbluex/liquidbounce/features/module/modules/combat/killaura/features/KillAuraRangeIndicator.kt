@@ -85,7 +85,7 @@ object KillAuraRangeIndicator : ToggleableValueGroup(ModuleKillAura, "RangeIndic
     }
 
     private fun renderIndicator(env: WorldRenderEnvironment, partialTicks: Float, target: LivingEntity?) {
-        val range = ModuleKillAura.range.getAttackRange()
+        val range = ModuleKillAura.range.logic.getAttackRange()
         val maxRange = range.effectiveMaxRange(player)
         val minRange = range.effectiveMinRange(player)
         val pos = player.interpolateCurrentPosition(partialTicks)
@@ -122,13 +122,13 @@ object KillAuraRangeIndicator : ToggleableValueGroup(ModuleKillAura, "RangeIndic
             innerRadius = minRange
         )
 
-        if (wallRangeColor.a > 0 && ModuleKillAura.range.interactionThroughWallsRange < maxRange) {
+        if (wallRangeColor.a > 0 && ModuleKillAura.range.logic.interactionThroughWallsRange < maxRange) {
             val color = if (hasTarget) {
                 wallRangeColor.fade(1.5f)
             } else {
                 wallRangeColor
             }
-            drawRangeCircle(ModuleKillAura.range.interactionThroughWallsRange + pulseOffset * 0.5f, color, 80)
+            drawRangeCircle(ModuleKillAura.range.logic.interactionThroughWallsRange + pulseOffset * 0.5f, color, 80)
         }
 
         if (scanRangeColor.a > 0) {

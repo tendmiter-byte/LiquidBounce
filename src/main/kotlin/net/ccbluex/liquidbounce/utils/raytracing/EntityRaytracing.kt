@@ -18,14 +18,15 @@
  */
 package net.ccbluex.liquidbounce.utils.raytracing
 
+import java.util.function.Predicate
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.client.mc
+import net.ccbluex.liquidbounce.utils.math.RANGE_PRECISION_EPSILON
 import net.ccbluex.liquidbounce.utils.math.sq
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.EntitySelector
 import net.minecraft.world.entity.projectile.ProjectileUtil
 import net.minecraft.world.phys.EntityHitResult
-import java.util.function.Predicate
 
 fun Entity.findEntityInCrosshair(
     range: Double,
@@ -88,8 +89,8 @@ fun isLookingAtEntity(
     throughWallsRange: Double,
 ): EntityHitResult? {
     val cameraVec = fromEntity.eyePosition
-    val traceRange = range + 0.005
-    val traceThroughWallsRange = throughWallsRange + 0.005
+    val traceRange = range + RANGE_PRECISION_EPSILON
+    val traceThroughWallsRange = throughWallsRange + RANGE_PRECISION_EPSILON
     val entityHitResult = fromEntity.findEntityInCrosshair(traceRange, rotation) { entity ->
         entity == toEntity
     } ?: return null

@@ -25,6 +25,8 @@ import net.minecraft.util.Mth
 import org.joml.Vector2f
 import java.math.RoundingMode
 
+const val RANGE_PRECISION_EPSILON = 0.005f
+
 inline fun Float.toRadians() = this * Mth.DEG_TO_RAD
 inline fun Double.toRadians() = this * Mth.DEG_TO_RAD
 inline fun Float.toDegrees() = this * Mth.RAD_TO_DEG

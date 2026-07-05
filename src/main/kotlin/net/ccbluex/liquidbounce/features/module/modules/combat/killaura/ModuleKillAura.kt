@@ -209,14 +209,14 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         }
 
         val rotation = (if (rotations.rotationTiming == ON_TICK) {
-            findRotation(target, range.getInteractionRangeFor(target), range.getThroughWallsRangeFor(target))?.rotation
+            findRotation(target, range.logic.getInteractionRangeFor(target), range.logic.getThroughWallsRangeFor(target))?.rotation
         } else {
             null
         } ?: RotationManager.currentRotation ?: player.rotation).normalize()
 
         val crosshairTarget = when {
             raycast != TRACE_NONE -> {
-                findEntityInCrosshair(range.getInteractionRangeFor(target).toDouble(), rotation, predicate = {
+                findEntityInCrosshair(range.logic.getInteractionRangeFor(target).toDouble(), rotation, predicate = {
                     when (raycast) {
                         TRACE_ONLYENEMY -> it.shouldBeAttacked()
                         TRACE_ALL -> true
@@ -257,20 +257,20 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         val attackHitResult = isLookingAtEntity(
             toEntity = target,
             rotation = rotation,
-            range = range.getInteractionRangeFor(target).toDouble(),
-            throughWallsRange = range.getThroughWallsRangeFor(target).toDouble()
+            range = range.logic.getInteractionRangeFor(target).toDouble(),
+            throughWallsRange = range.logic.getThroughWallsRangeFor(target).toDouble()
         )
 
         debugParameter("Target Hit Result") { attackHitResult?.location }
 
         val isInRange = ModuleElytraTarget.canIgnoreKillAuraRotations ||
-            attackHitResult != null && range.isInRange(target, pos = attackHitResult.location)
+            attackHitResult != null && range.logic.isInRange(target, pos = attackHitResult.location)
         debugParameter("Is In Range") { isInRange }
 
         // Check if our target is in range, otherwise deal with auto block
         if (!isInRange) {
             if (KillAuraAutoBlock.enabled && KillAuraAutoBlock.onScanRange &&
-                target.squaredBoxedDistanceTo(player) <= range.getScanRangeFor(target).sq()) {
+                target.squaredBoxedDistanceTo(player) <= range.logic.getScanRangeFor(target).sq()) {
                 if (KillAuraClicker.ticksSinceLastClick >= KillAuraAutoBlock.reblockTicks) {
                     KillAuraAutoBlock.startBlocking()
                 }
@@ -324,8 +324,8 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
         // Find a suitable target
         val target = targetTracker.targets()
             .filter { entity ->
-                val entityRange = range.getInteractionRangeFor(entity)
-                val scanRange = range.getScanRangeFor(entity)
+                val entityRange = range.logic.getInteractionRangeFor(entity)
+                val scanRange = range.logic.getScanRangeFor(entity)
                 val maximumRange = if (targetTracker.closestSquaredEnemyDistance > entityRange.sq()) {
                     scanRange
                 } else {
@@ -334,18 +334,18 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
                 entity.squaredBoxedDistanceTo(player) <= maximumRange.sq()
             }
             .sortedBy { entity ->
-                val entityRange = range.getInteractionRangeFor(entity)
+                val entityRange = range.logic.getInteractionRangeFor(entity)
                 if (entity.squaredBoxedDistanceTo(player) <= entityRange.sq()) 0 else 1
             }
             .firstOrNull { entity ->
-                val entityRange = range.getInteractionRangeFor(entity)
-                val scanRange = range.getScanRangeFor(entity)
+                val entityRange = range.logic.getInteractionRangeFor(entity)
+                val scanRange = range.logic.getScanRangeFor(entity)
                 val maximumRange = if (targetTracker.closestSquaredEnemyDistance > entityRange.sq()) {
                     scanRange
                 } else {
                     entityRange
                 }
-                processTarget(entity, maximumRange, range.getThroughWallsRangeFor(entity))
+                processTarget(entity, maximumRange, range.logic.getThroughWallsRangeFor(entity))
             }
 
         if (target != null) {
