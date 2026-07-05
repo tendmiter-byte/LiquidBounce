@@ -182,6 +182,11 @@ class CefBrowserBackend : BrowserBackend, EventListener {
                     cefBrowser: org.cef.browser.CefBrowser, frame: CefFrame?,
                     errorCode: CefLoadHandler.ErrorCode?, errorText: String?, failedUrl: String?
                 ) {
+                    if (errorCode == CefLoadHandler.ErrorCode.ERR_ABORTED) {
+                        super.onLoadError(cefBrowser, frame, errorCode, errorText, failedUrl)
+                        return
+                    }
+
                     updateStateForBrowser(
                         cefBrowser,
                         BrowserState.Failure(
