@@ -30,7 +30,7 @@ import net.ccbluex.liquidbounce.features.module.modules.misc.debugrecorder.modes
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
-import net.ccbluex.liquidbounce.utils.block.AStarPathBuilder
+import net.ccbluex.liquidbounce.utils.block.DDAAStarPathBuilder
 import net.ccbluex.liquidbounce.utils.block.BlockPathSearchBounds
 import net.ccbluex.liquidbounce.utils.block.BlockPathNode
 import net.ccbluex.liquidbounce.utils.block.BlockPathNodeKind
@@ -624,7 +624,7 @@ private const val UNREACHABLE_ORIGIN_RETRY_DISTANCE_SQ =
  * A fight bot that handles combat and movement automatically
  */
 @Suppress("LargeClass", "TooManyFunctions")
-object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura, "FightBot", false), AStarPathBuilder {
+object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura, "FightBot", false), DDAAStarPathBuilder {
 
     override val allowDiagonal: Boolean get() = true
     override val allowClimbableNavigation: Boolean get() = true
