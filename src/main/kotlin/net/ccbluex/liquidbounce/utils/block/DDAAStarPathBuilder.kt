@@ -22,11 +22,9 @@ package net.ccbluex.liquidbounce.utils.block
 import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap
 import net.ccbluex.liquidbounce.utils.client.player
 import net.ccbluex.liquidbounce.utils.client.world
-import net.ccbluex.liquidbounce.utils.entity.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.entity.getBoundingBoxAt
-import net.ccbluex.liquidbounce.utils.entity.set
 import net.ccbluex.liquidbounce.utils.math.allEmpty
-import net.ccbluex.liquidbounce.utils.movement.DirectionalInput
+import net.ccbluex.liquidbounce.utils.raytracing.pathfinder.DDARaycast
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Vec3i
 import net.minecraft.tags.BlockTags
@@ -421,6 +419,7 @@ interface DDAAStarPathBuilder {
         bodyPassableCache.get().clear()
         floorCache.get().clear()
         hazardCache.get().clear()
+        PathfinderSimulation.clearCache()
 
         val searchResult = aStarShortestPathResult(
             start = start,
@@ -501,67 +500,6 @@ interface DDAAStarPathBuilder {
         }
     }
 
-    private fun simulateParkourJump(start: Vec3i, landing: Vec3i): Boolean {
-        val startPos = Vec3(start.x + 0.5, start.y.toDouble(), start.z + 0.5)
-        val dx = landing.x - start.x
-        val dz = landing.z - start.z
-        val yaw = Math.toDegrees(Math.atan2(-dx.toDouble(), dz.toDouble())).toFloat()
-
-        val input = SimulatedPlayer.SimulatedPlayerInput(
-            directionalInput = DirectionalInput.FORWARDS,
-            jumping = true,
-            sprinting = true,
-            sneaking = false
-        )
-
-        val simPlayer = SimulatedPlayer(
-            player = player,
-            input = input,
-            pos = startPos,
-            deltaMovement = Vec3.ZERO,
-            boundingBox = player.getBoundingBoxAt(startPos),
-            yRot = yaw,
-            xRot = 0f,
-            isSprinting = true,
-            fallDistance = 0.0,
-            jumpTriggerTime = 0,
-            jumping = true,
-            fallFlying = false,
-            onGround = true,
-            horizontalCollision = false,
-            verticalCollision = false,
-            wasTouchingWater = false,
-            isSwimming = false,
-            wasUnderwater = false,
-            fluidInteraction = player.fluidInteraction
-        )
-
-        for (tick in 1..20) {
-            if (tick > 1) {
-                input.set(jump = false)
-            }
-
-            simPlayer.tick()
-
-            if (simPlayer.onGround) {
-                val currentX = kotlin.math.floor(simPlayer.pos.x).toInt()
-                val currentZ = kotlin.math.floor(simPlayer.pos.z).toInt()
-                if (currentX == landing.x && currentZ == landing.z && abs(simPlayer.pos.y - landing.y) < 0.5) {
-                    return true
-                }
-                if (tick > 2) {
-                    return false
-                }
-            }
-
-            if (simPlayer.pos.y < landing.y - 1.5) {
-                return false
-            }
-        }
-
-        return false
-    }
-
     private fun MutableList<WeightedEdge<Vec3i>>.getAdjacentNodesParkour(
         position: Vec3i,
         bounds: BlockPathSearchBounds?
@@ -611,7 +549,7 @@ interface DDAAStarPathBuilder {
                         continue
                     }
 
-                    if (!simulateParkourJump(position, landing)) {
+                    if (!PathfinderSimulation.simulateParkourJump(position, landing)) {
                         recordParkourEdgeRejected("simulation")
                         continue
                     }
@@ -646,73 +584,6 @@ interface DDAAStarPathBuilder {
         }
     }
 
-    private fun simulateMove(from: Vec3i, to: Vec3i): Boolean {
-        val startPos = Vec3(from.x + 0.5, from.y.toDouble(), from.z + 0.5)
-        val dx = to.x - from.x
-        val dz = to.z - from.z
-        val yaw = Math.toDegrees(Math.atan2(-dx.toDouble(), dz.toDouble())).toFloat()
-
-        val shouldJump = to.y > from.y
-
-        val input = SimulatedPlayer.SimulatedPlayerInput(
-            directionalInput = DirectionalInput.FORWARDS,
-            jumping = shouldJump,
-            sprinting = true,
-            sneaking = false
-        )
-
-        val simPlayer = SimulatedPlayer(
-            player = player,
-            input = input,
-            pos = startPos,
-            deltaMovement = Vec3.ZERO,
-            boundingBox = player.getBoundingBoxAt(startPos),
-            yRot = yaw,
-            xRot = 0f,
-            isSprinting = true,
-            fallDistance = 0.0,
-            jumpTriggerTime = 0,
-            jumping = shouldJump,
-            fallFlying = false,
-            onGround = true,
-            horizontalCollision = false,
-            verticalCollision = false,
-            wasTouchingWater = false,
-            isSwimming = false,
-            wasUnderwater = false,
-            fluidInteraction = player.fluidInteraction
-        )
-
-        for (tick in 1..12) {
-            if (tick > 1) {
-                input.set(jump = false)
-            }
-
-            simPlayer.tick()
-
-            if (simPlayer.onGround) {
-                val currentX = kotlin.math.floor(simPlayer.pos.x).toInt()
-                val currentZ = kotlin.math.floor(simPlayer.pos.z).toInt()
-                if (currentX == to.x && currentZ == to.z && abs(simPlayer.pos.y - to.y) < 0.5) {
-                    return true
-                }
-                if (tick > 2) {
-                    return false
-                }
-            }
-
-            if (simPlayer.pos.y < to.y - 1.5) {
-                return false
-            }
-        }
-
-        return false
-    }
-
-    private fun isTransitionPassable(from: Vec3i, to: Vec3i): Boolean {
-        return simulateMove(from, to)
-    }
-
     private fun resolveNavigableNeighbor(
         position: Vec3i,
         direction: Vec3i,
@@ -727,7 +598,30 @@ interface DDAAStarPathBuilder {
             }
             if (adjacentPosition.isStandable || allowClimbable && adjacentPosition.isClimbableNode) {
                 val neighbor = adjacentPosition.immutable()
-                if (isTransitionPassable(position, neighbor)) {
+
+                // Fast DDA Raycast pre-check for flat/downward moves to avoid expensive simulation
+                if (neighbor.y <= position.y) {
+                    val isSolidBlock = { packed: Long ->
+                        val px = BlockPos.getX(packed)
+                        val py = BlockPos.getY(packed)
+                        val pz = BlockPos.getZ(packed)
+                        val mutablePos = BlockPos.MutableBlockPos(px, py, pz)
+                        val state = world.getBlockState(mutablePos)
+                        !state.getCollisionShape(world, mutablePos).isEmpty
+                    }
+                    val startFeet = Vec3(position.x + 0.5, position.y + 0.1, position.z + 0.5)
+                    val endFeet = Vec3(neighbor.x + 0.5, neighbor.y + 0.1, neighbor.z + 0.5)
+                    if (!DDARaycast.hasLineOfSight(world, startFeet, endFeet, allowStartInside = true, isSolid = isSolidBlock)) {
+                        continue
+                    }
+                    val startHead = Vec3(position.x + 0.5, position.y + 1.6, position.z + 0.5)
+                    val endHead = Vec3(neighbor.x + 0.5, neighbor.y + 1.6, neighbor.z + 0.5)
+                    if (!DDARaycast.hasLineOfSight(world, startHead, endHead, allowStartInside = true, isSolid = isSolidBlock)) {
+                        continue
+                    }
+                }
+
+                if (PathfinderSimulation.simulateMove(position, neighbor)) {
                     return neighbor
                 }
             }

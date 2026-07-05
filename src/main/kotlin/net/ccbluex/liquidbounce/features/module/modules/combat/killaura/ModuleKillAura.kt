@@ -28,14 +28,11 @@ import net.ccbluex.liquidbounce.event.tickHandler
 import net.ccbluex.liquidbounce.features.module.ClientModule
 import net.ccbluex.liquidbounce.features.module.ModuleCategories
 import net.ccbluex.liquidbounce.features.module.modules.combat.ModuleAutoWeapon
-import net.ccbluex.liquidbounce.utils.client.network
-import net.ccbluex.liquidbounce.utils.network.MovePacketType
-import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.VisualsValueGroup.showCriticals
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.CriticalsSelectionMode
+import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.VisualsValueGroup.showCriticals
 import net.ccbluex.liquidbounce.features.module.modules.combat.elytratarget.ModuleElytraTarget
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.KillAuraRotationsValueGroup.KillAuraRotationTiming.ON_TICK
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.KillAuraRotationsValueGroup.KillAuraRotationTiming.SNAP
-import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.ModuleAutoBuff
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura.RaycastMode.TRACE_ALL
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura.RaycastMode.TRACE_NONE
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura.RaycastMode.TRACE_ONLYENEMY
@@ -43,20 +40,24 @@ import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraFailSwing
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraFailSwing.dealWithFakeSwing
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraFightBot
-
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraNotifyWhenFail
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraNotifyWhenFail.failedHits
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraNotifyWhenFail.renderFailedHits
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraRange
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features.KillAuraRangeIndicator
 import net.ccbluex.liquidbounce.features.module.modules.misc.debugrecorder.modes.GenericDebugRecorder
+import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.ModuleAutoBuff
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug.debugGeometry
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug.debugParameter
+import net.ccbluex.liquidbounce.render.addVertex
+import net.ccbluex.liquidbounce.render.drawBox
+import net.ccbluex.liquidbounce.render.drawCustomMesh
 import net.ccbluex.liquidbounce.render.drawLineStrip
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
 import net.ccbluex.liquidbounce.render.renderEnvironment
 import net.ccbluex.liquidbounce.render.utils.MutableVertexList
+import net.ccbluex.liquidbounce.render.utils.forEachVertex
 import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.aiming.data.RotationWithVector
@@ -64,6 +65,8 @@ import net.ccbluex.liquidbounce.utils.aiming.point.PointTracker
 import net.ccbluex.liquidbounce.utils.aiming.preference.LeastDifferencePreference
 import net.ccbluex.liquidbounce.utils.aiming.utils.raytraceBox
 import net.ccbluex.liquidbounce.utils.block.SwingMode
+import net.ccbluex.liquidbounce.utils.client.Chronometer
+import net.ccbluex.liquidbounce.utils.client.network
 import net.ccbluex.liquidbounce.utils.collection.itemSortedSetOf
 import net.ccbluex.liquidbounce.utils.combat.CombatManager
 import net.ccbluex.liquidbounce.utils.combat.attackEntity
@@ -75,6 +78,7 @@ import net.ccbluex.liquidbounce.utils.inventory.isInContainerScreen
 import net.ccbluex.liquidbounce.utils.kotlin.Priority
 import net.ccbluex.liquidbounce.utils.math.center
 import net.ccbluex.liquidbounce.utils.math.sq
+import net.ccbluex.liquidbounce.utils.network.MovePacketType
 import net.ccbluex.liquidbounce.utils.raytracing.findEntityInCrosshair
 import net.ccbluex.liquidbounce.utils.raytracing.isLookingAtEntity
 import net.ccbluex.liquidbounce.utils.render.TargetRenderer
@@ -82,6 +86,7 @@ import net.minecraft.client.gui.screens.inventory.ContainerScreen
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.item.ItemStack
+import net.minecraft.world.phys.AABB
 
 /**
  * KillAura module
@@ -99,6 +104,7 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
     // Rotation
     private val rotations = tree(KillAuraRotationsValueGroup)
     private val pointTracker = tree(PointTracker(this))
+    private val pathRenderChronometer = Chronometer()
 
     private val requires by multiEnumChoice<KillAuraRequirements>("Requires")
 
@@ -152,11 +158,59 @@ object ModuleKillAura : ClientModule("KillAura", ModuleCategories.COMBAT) {
             if (KillAuraFightBot.running) {
                 KillAuraFightBot.currentPathNodes?.let { path ->
                     if (path.isNotEmpty()) {
-                        drawLineStrip(
-                            argb = Color4b(0, 255, 0, 255).argb,
-                            positions = MutableVertexList(path.size)
+                        val time = pathRenderChronometer.elapsed / 250.0
+                        
+                        // Draw a moving cyber-glow gradient line strip
+                        drawCustomMesh(net.ccbluex.liquidbounce.render.ClientRenderPipelines.LineStrip) { pose ->
+                            val relativePositions = MutableVertexList(path.size)
                                 .addAllRelativeToCamera(path, camera) { it.center }
-                        )
+                            
+                            var index = 0
+                            relativePositions.forEachVertex { x, y, z ->
+                                // Pulse cyan-to-purple gradient along the path
+                                val cycle = Math.sin(time + index * 0.15) * 0.5 + 0.5
+                                val r = (0 * (1 - cycle) + 189 * cycle).toInt()
+                                val g = (255 * (1 - cycle) + 0 * cycle).toInt()
+                                val b = (255 * (1 - cycle) + 255 * cycle).toInt()
+                                
+                                addVertex(pose, x, y, z).setColor(Color4b(r, g, b, 255).argb)
+                                index++
+                            }
+                        }
+
+                        // Draw glowing breadcrumb nodes along the path
+                        path.forEachIndexed { index, node ->
+                            val cycle = Math.sin(time + index * 0.15) * 0.5 + 0.5
+                            val r = (0 * (1 - cycle) + 189 * cycle).toInt()
+                            val g = (255 * (1 - cycle) + 0 * cycle).toInt()
+                            val b = (255 * (1 - cycle) + 255 * cycle).toInt()
+
+                            // Nodes are small 0.15 block boxes
+                            val size = 0.075
+                            val box = AABB(
+                                node.x + 0.5 - size, node.y + 0.5 - size, node.z + 0.5 - size,
+                                node.x + 0.5 + size, node.y + 0.5 + size, node.z + 0.5 + size
+                            )
+
+                            // Goal/destination is a larger glowing box
+                            val isGoal = index == path.lastIndex
+                            val boxSize = if (isGoal) 0.4 else size
+                            val renderBox = if (isGoal) {
+                                AABB(
+                                    node.x + 0.5 - boxSize, node.y.toDouble(), node.z + 0.5 - boxSize,
+                                    node.x + 0.5 + boxSize, node.y + 1.0, node.z + 0.5 + boxSize
+                                )
+                            } else box
+
+                            val faceAlpha = if (isGoal) 40 else 25
+                            val outlineAlpha = if (isGoal) 255 else 120
+
+                            drawBox(
+                                box = renderBox,
+                                faceColor = Color4b(r, g, b, faceAlpha),
+                                outlineColor = Color4b(r, g, b, outlineAlpha)
+                            )
+                        }
                     }
                 }
             }

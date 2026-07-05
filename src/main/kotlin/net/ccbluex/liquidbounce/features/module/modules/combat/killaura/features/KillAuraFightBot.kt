@@ -1799,13 +1799,13 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
     private fun hasStraightPath(start: Vec3, end: Vec3): Boolean {
         val diagnosticsStart = System.nanoTime()
-        val result = DDARaycast.hasLineOfSight(
+        val result = DDARaycast.sweptAABBTrace(
             level = world,
-            startX = start.x, startY = start.y + 0.5, startZ = start.z,
-            endX = end.x, endY = end.y + 0.5, endZ = end.z,
-            allowStartInside = true,
+            startPos = start,
+            endPos = end,
+            boundingBoxSize = Vec3(0.6, 1.8, 0.6),
             isSolid = ::isBlockSolidOrHazardous
-        )
+        ) >= 1.0
         recordRaycastTime(diagnosticsStart)
 
         return result

@@ -25,6 +25,7 @@ import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
 import net.minecraft.world.level.Level
 import net.minecraft.world.level.block.state.BlockState
+import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
 import kotlin.math.abs
 import kotlin.math.floor
@@ -409,5 +410,114 @@ object DDARaycast {
                 isSolid(state)
             }
         )
+    }
+
+    /**
+     * Calculates the time of entry of a moving AABB into a static AABB.
+     * Returns a double between 0.0 and 1.0 if there is a collision, or 1.0 if no collision.
+     */
+    fun sweptAABB(
+        moving: AABB,
+        direction: Vec3,
+        target: AABB
+    ): Double {
+        if (moving.intersects(target)) return 0.0
+
+        var xEntryDist: Double
+        var xExitDist: Double
+        var yEntryDist: Double
+        var yExitDist: Double
+        var zEntryDist: Double
+        var zExitDist: Double
+
+        if (direction.x > 0.0) {
+            xEntryDist = target.minX - moving.maxX
+            xExitDist = target.maxX - moving.minX
+        } else {
+            xEntryDist = target.maxX - moving.minX
+            xExitDist = target.minX - moving.maxX
+        }
+
+        if (direction.y > 0.0) {
+            yEntryDist = target.minY - moving.maxY
+            yExitDist = target.maxY - moving.minY
+        } else {
+            yEntryDist = target.maxY - moving.minY
+            yExitDist = target.minY - moving.maxY
+        }
+
+        if (direction.z > 0.0) {
+            zEntryDist = target.minZ - moving.maxZ
+            zExitDist = target.maxZ - moving.minZ
+        } else {
+            zEntryDist = target.maxZ - moving.minZ
+            zExitDist = target.minZ - moving.maxZ
+        }
+
+        val xEntry = if (direction.x == 0.0) Double.NEGATIVE_INFINITY else xEntryDist / direction.x
+        val xExit = if (direction.x == 0.0) Double.POSITIVE_INFINITY else xExitDist / direction.x
+
+        val yEntry = if (direction.y == 0.0) Double.NEGATIVE_INFINITY else yEntryDist / direction.y
+        val yExit = if (direction.y == 0.0) Double.POSITIVE_INFINITY else yExitDist / direction.y
+
+        val zEntry = if (direction.z == 0.0) Double.NEGATIVE_INFINITY else zEntryDist / direction.z
+        val zExit = if (direction.z == 0.0) Double.POSITIVE_INFINITY else zExitDist / direction.z
+
+        val entryTime = maxOf(xEntry, maxOf(yEntry, zEntry))
+        val exitTime = minOf(xExit, minOf(yExit, zExit))
+
+        if (entryTime > exitTime || (xEntry < 0.0 && yEntry < 0.0 && zEntry < 0.0) || entryTime > 1.0) {
+            return 1.0
+        }
+
+        return entryTime
+    }
+
+    /**
+     * Performs a swept AABB trace on the voxel grid.
+     * Sweeps a box of the specified size from startPos to endPos and returns the fraction (0.0 to 1.0)
+     * of the path traveled before colliding with any solid block.
+     *
+     * @return 1.0 if the path is completely clear, or the entry time fraction (0.0 to 1.0) if a collision occurred.
+     */
+    fun sweptAABBTrace(
+        level: Level,
+        startPos: Vec3,
+        endPos: Vec3,
+        boundingBoxSize: Vec3,
+        isSolid: (Long) -> Boolean
+    ): Double {
+        val direction = endPos.subtract(startPos)
+        val startBox = AABB(
+            startPos.x - boundingBoxSize.x / 2.0, startPos.y, startPos.z - boundingBoxSize.z / 2.0,
+            startPos.x + boundingBoxSize.x / 2.0, startPos.y + boundingBoxSize.y, startPos.z + boundingBoxSize.z / 2.0
+        )
+
+        val minX = floor(minOf(startPos.x, endPos.x) - boundingBoxSize.x / 2.0).toInt()
+        val maxX = floor(maxOf(startPos.x, endPos.x) + boundingBoxSize.x / 2.0).toInt()
+        val minY = floor(minOf(startPos.y, endPos.y)).toInt()
+        val maxY = floor(maxOf(startPos.y, endPos.y) + boundingBoxSize.y).toInt()
+        val minZ = floor(minOf(startPos.z, endPos.z) - boundingBoxSize.z / 2.0).toInt()
+        val maxZ = floor(maxOf(startPos.z, endPos.z) + boundingBoxSize.z / 2.0).toInt()
+
+        var earliestEntry = 1.0
+
+        for (x in minX..maxX) {
+            for (y in minY..maxY) {
+                for (z in minZ..maxZ) {
+                    val packed = BlockPos.asLong(x, y, z)
+                    if (isSolid(packed)) {
+                        val targetBox = AABB(x.toDouble(), y.toDouble(), z.toDouble(), x + 1.0, y + 1.0, z + 1.0)
+                        val entryTime = sweptAABB(startBox, direction, targetBox)
+                        if (entryTime < earliestEntry) {
+                            earliestEntry = entryTime
+                            if (earliestEntry <= 0.0) return 0.0
+                        }
+                    }
+                }
+            }
+        }
+
+        return earliestEntry
     }
 }
