@@ -153,6 +153,7 @@ object ModuleAimbot : ClientModule("Aimbot", ModuleCategories.COMBAT, aliases = 
     }
 
 
+
     private fun findNextTargetRotation(): Pair<Entity, RotationWithVector>? {
         for (entity in targetTracker.targets()) {
             val eyes = player.eyePosition
