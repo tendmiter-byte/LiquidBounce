@@ -454,6 +454,49 @@ class GraphSearchTest {
         assertNull(result)
     }
 
+    @Test
+    fun `grid search reaches elevated target through one block step ups`() {
+        val start = StepGridCell(0, 0, 0)
+        val goal = StepGridCell(3, 3, 0)
+        val standable = setOf(
+            start,
+            StepGridCell(1, 1, 0),
+            StepGridCell(2, 2, 0),
+            goal,
+        )
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it == goal },
+            neighbors = { cell -> cell.stepNeighbors(standable) },
+            heuristic = { cell -> cell.manhattanDistance(goal).toDouble() },
+            maxIterations = 100,
+            maxCost = 20.0,
+        )
+
+        val path = assertNotNull(result)
+        assertEquals(listOf(0, 1, 2, 3), path.nodes.map { it.y })
+        assertEquals(goal, path.nodes.last())
+    }
+
+    @Test
+    fun `grid search rejects two block cliff without intermediate step`() {
+        val start = StepGridCell(0, 0, 0)
+        val goal = StepGridCell(1, 2, 0)
+        val standable = setOf(start, goal)
+
+        val result = aStarShortestPath(
+            start = start,
+            isGoal = { it == goal },
+            neighbors = { cell -> cell.stepNeighbors(standable) },
+            heuristic = { cell -> cell.manhattanDistance(goal).toDouble() },
+            maxIterations = 100,
+            maxCost = 20.0,
+        )
+
+        assertNull(result)
+    }
+
     private data class GridCell(val x: Int, val z: Int) {
 
         fun manhattanDistance(other: GridCell): Int {
@@ -505,6 +548,33 @@ class GraphSearchTest {
                 .map { WeightedEdge(it, 1.2) }
 
             return horizontal + vertical
+        }
+    }
+
+    private data class StepGridCell(val x: Int, val y: Int, val z: Int) {
+
+        fun manhattanDistance(other: StepGridCell): Int {
+            return abs(x - other.x) + abs(y - other.y) + abs(z - other.z)
+        }
+
+        fun stepNeighbors(standable: Set<StepGridCell>): List<WeightedEdge<StepGridCell>> {
+            return listOf(
+                copy(x = x - 1, y = y),
+                copy(x = x - 1, y = y + 1),
+                copy(x = x + 1, y = y),
+                copy(x = x + 1, y = y + 1),
+                copy(z = z - 1, y = y),
+                copy(z = z - 1, y = y + 1),
+                copy(z = z + 1, y = y),
+                copy(z = z + 1, y = y + 1),
+            )
+                .filter { it in standable }
+                .map { neighbor ->
+                    WeightedEdge(
+                        node = neighbor,
+                        cost = 1.0 + if (neighbor.y > y) 0.5 else 0.0
+                    )
+                }
         }
     }
 }

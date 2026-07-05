@@ -50,6 +50,61 @@ data class BlockPathResult(
     val totalCost: Double,
 )
 
+enum class BlockPathNodeKind {
+    WALK,
+    STEP_UP,
+    DROP_DOWN,
+    CLIMB
+}
+
+data class BlockPathNode(
+    val position: Vec3i,
+    val kind: BlockPathNodeKind,
+)
+
+data class DetailedBlockPath(
+    val nodes: List<Vec3i>,
+    val steps: List<BlockPathNode>,
+    val totalCost: Double,
+)
+
+data class DetailedBlockPathResult(
+    val reachedGoal: Vec3i,
+    val nodes: List<Vec3i>,
+    val steps: List<BlockPathNode>,
+    val totalCost: Double,
+)
+
+internal fun classifyBlockPathNodeKind(
+    previous: Vec3i,
+    next: Vec3i,
+    isClimbable: (Vec3i) -> Boolean,
+): BlockPathNodeKind {
+    return when {
+        isClimbable(previous) || isClimbable(next) -> BlockPathNodeKind.CLIMB
+        next.y > previous.y -> BlockPathNodeKind.STEP_UP
+        next.y < previous.y -> BlockPathNodeKind.DROP_DOWN
+        else -> BlockPathNodeKind.WALK
+    }
+}
+
+internal fun createBlockPathSteps(
+    start: Vec3i,
+    nodes: List<Vec3i>,
+    isClimbable: (Vec3i) -> Boolean,
+): List<BlockPathNode> {
+    var previous = start
+
+    return nodes.map { node ->
+        BlockPathNode(
+            position = node,
+            kind = classifyBlockPathNodeKind(previous, node, isClimbable)
+        ).also {
+            previous = node
+        }
+    }
+}
+
 private val cardinalDirections = arrayOf(
     Vec3i(-1, 0, 0), // left
     Vec3i(1, 0, 0), // right
@@ -162,12 +217,28 @@ interface AStarPathBuilder {
     }
 
     fun findPathResult(start: Vec3i, end: Vec3i, maxCost: Int): BlockPath? {
-        return findPathToAnyResult(start, listOf(end), maxCost)?.let { result ->
+        return findPathToAnyDetailedResult(start, listOf(end), maxCost)?.let { result ->
             BlockPath(result.nodes, result.totalCost)
         }
     }
 
     fun findPathToAnyResult(start: Vec3i, goals: Collection<Vec3i>, maxCost: Int): BlockPathResult? {
+        return findPathToAnyDetailedResult(start, goals, maxCost)?.let { result ->
+            BlockPathResult(result.reachedGoal, result.nodes, result.totalCost)
+        }
+    }
+
+    fun findPathDetailedResult(start: Vec3i, end: Vec3i, maxCost: Int): DetailedBlockPath? {
+        return findPathToAnyDetailedResult(start, listOf(end), maxCost)?.let { result ->
+            DetailedBlockPath(result.nodes, result.steps, result.totalCost)
+        }
+    }
+
+    fun findPathToAnyDetailedResult(
+        start: Vec3i,
+        goals: Collection<Vec3i>,
+        maxCost: Int
+    ): DetailedBlockPathResult? {
         val goalList = goals.distinct()
         if (goalList.isEmpty()) {
             return null
@@ -175,7 +246,7 @@ interface AStarPathBuilder {
 
         goalList.minByOrNull { it.distSqr(start) }
             ?.takeIf { it.closerThan(start, stopRange) }
-            ?.let { return BlockPathResult(it, emptyList(), 0.0) }
+            ?.let { return DetailedBlockPathResult(it, emptyList(), emptyList(), 0.0) }
 
         val shortestPath = aStarShortestPath(
             start = start,
@@ -190,7 +261,13 @@ interface AStarPathBuilder {
         val reachedGoal = goalList.minByOrNull { it.distSqr(reachedNode) } ?: return null
 
         // Exclude start node to preserve the original API contract.
-        return BlockPathResult(reachedGoal, shortestPath.nodes.drop(1), shortestPath.totalCost)
+        val nodes = shortestPath.nodes.drop(1)
+        return DetailedBlockPathResult(
+            reachedGoal = reachedGoal,
+            nodes = nodes,
+            steps = createBlockPathSteps(start, nodes, ::isClimbablePathNode),
+            totalCost = shortestPath.totalCost
+        )
     }
 
     private fun getAdjacentEdges(position: Vec3i): List<WeightedEdge<Vec3i>> = buildList {
@@ -232,7 +309,8 @@ interface AStarPathBuilder {
             val adjacentPosition = resolveNavigableNeighbor(position, direction, allowClimbable = false)
             if (adjacentPosition != null &&
                 pos.set(position.x + direction.x, adjacentPosition.y, position.z).isBodyPassable() &&
-                pos.set(position.x, adjacentPosition.y, position.z + direction.z).isBodyPassable()
+                pos.set(position.x, adjacentPosition.y, position.z + direction.z).isBodyPassable() &&
+                isDiagonalStepUpAllowed(position, direction, adjacentPosition)
             ) {
                 add(WeightedEdge(adjacentPosition, position.walkCostTo(adjacentPosition)))
             }
@@ -241,7 +319,7 @@ interface AStarPathBuilder {
 
     private fun resolveNavigableNeighbor(position: Vec3i, direction: Vec3i, allowClimbable: Boolean): BlockPos? {
         val pos = BlockPos.MutableBlockPos()
-        for (offsetY in maxStepUp downTo -maxDropDown) {
+        for (offsetY in verticalNeighborOffsets()) {
             val adjacentPosition = pos.set(position.x + direction.x, position.y + offsetY, position.z + direction.z)
             if (adjacentPosition.isStandable || allowClimbable && adjacentPosition.isClimbableNode) {
                 return adjacentPosition.immutable()
@@ -249,6 +327,27 @@ interface AStarPathBuilder {
         }
 
         return null
+    }
+
+    private fun verticalNeighborOffsets(): List<Int> = buildList {
+        add(0)
+        for (offset in 1..maxStepUp) {
+            add(offset)
+        }
+        for (offset in -1 downTo -maxDropDown) {
+            add(offset)
+        }
+    }
+
+    private fun isDiagonalStepUpAllowed(position: Vec3i, direction: Vec3i, adjacentPosition: Vec3i): Boolean {
+        if (adjacentPosition.y <= position.y) {
+            return true
+        }
+
+        val xAdjacent = resolveNavigableNeighbor(position, Vec3i(direction.x, 0, 0), allowClimbable = false)
+        val zAdjacent = resolveNavigableNeighbor(position, Vec3i(0, 0, direction.z), allowClimbable = false)
+
+        return xAdjacent?.y == adjacentPosition.y && zAdjacent?.y == adjacentPosition.y
     }
 
     private fun Vec3i.walkCostTo(other: Vec3i): Double {

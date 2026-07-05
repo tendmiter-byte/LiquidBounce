@@ -18,10 +18,14 @@
  */
 package net.ccbluex.liquidbounce.features.module.modules.combat.killaura.features
 
+import net.ccbluex.liquidbounce.utils.block.BlockPathNode
+import net.ccbluex.liquidbounce.utils.block.BlockPathNodeKind
+import net.ccbluex.liquidbounce.utils.block.createBlockPathSteps
 import net.ccbluex.liquidbounce.utils.movement.DirectionalInput
 import net.minecraft.core.BlockPos
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertIterableEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -63,6 +67,149 @@ class KillAuraFightBotNavigationTest {
                 isClimbable = { false }
             )
         )
+    }
+
+    @Test
+    fun `step up waypoint segment is not skippable`() {
+        val steps = listOf(
+            BlockPathNode(BlockPos(0, 0, 0), BlockPathNodeKind.WALK),
+            BlockPathNode(BlockPos(1, 1, 0), BlockPathNodeKind.STEP_UP),
+            BlockPathNode(BlockPos(2, 1, 0), BlockPathNodeKind.WALK),
+        )
+
+        assertTrue(
+            containsRequiredFightBotWaypoint(
+                steps = steps,
+                fromIndex = 0,
+                toIndex = 2,
+            )
+        )
+    }
+
+    @Test
+    fun `flat waypoint segment remains skippable`() {
+        val steps = listOf(
+            BlockPathNode(BlockPos(0, 0, 0), BlockPathNodeKind.WALK),
+            BlockPathNode(BlockPos(1, 0, 0), BlockPathNodeKind.WALK),
+            BlockPathNode(BlockPos(2, 0, 0), BlockPathNodeKind.DROP_DOWN),
+        )
+
+        assertFalse(
+            containsRequiredFightBotWaypoint(
+                steps = steps,
+                fromIndex = 0,
+                toIndex = 2,
+            )
+        )
+    }
+
+    @Test
+    fun `logged ascending path classifies repeated one block steps`() {
+        val start = BlockPos(21, -60, -7)
+        val nodes = listOf(
+            BlockPos(21, -59, -8),
+            BlockPos(20, -58, -8),
+            BlockPos(19, -58, -8),
+            BlockPos(18, -57, -9),
+            BlockPos(19, -56, -10),
+        )
+
+        val steps = createBlockPathSteps(start, nodes) { false }
+
+        assertIterableEquals(
+            listOf(
+                BlockPathNodeKind.STEP_UP,
+                BlockPathNodeKind.STEP_UP,
+                BlockPathNodeKind.WALK,
+                BlockPathNodeKind.STEP_UP,
+                BlockPathNodeKind.STEP_UP,
+            ),
+            steps.map { it.kind }
+        )
+        assertTrue(containsRequiredFightBotWaypoint(steps, 0, steps.lastIndex))
+    }
+
+    @Test
+    fun `step up jump waits for close grounded approach`() {
+        assertFalse(
+            shouldJumpForFightBotStepUpWaypoint(
+                waypointY = 1.0,
+                playerY = 0.0,
+                horizontalDistanceSq = 4.0,
+                onGround = true,
+                isStepUpWaypoint = true,
+                jumpTicks = 0,
+            )
+        )
+
+        assertTrue(
+            shouldJumpForFightBotStepUpWaypoint(
+                waypointY = 1.0,
+                playerY = 0.0,
+                horizontalDistanceSq = 1.0,
+                onGround = true,
+                isStepUpWaypoint = true,
+                jumpTicks = 0,
+            )
+        )
+    }
+
+    @Test
+    fun `step up jump hold is bounded`() {
+        assertTrue(
+            shouldJumpForFightBotStepUpWaypoint(
+                waypointY = 1.0,
+                playerY = 0.2,
+                horizontalDistanceSq = 1.0,
+                onGround = false,
+                isStepUpWaypoint = true,
+                jumpTicks = 1,
+            )
+        )
+
+        assertFalse(
+            shouldJumpForFightBotStepUpWaypoint(
+                waypointY = 1.0,
+                playerY = 0.2,
+                horizontalDistanceSq = 1.0,
+                onGround = false,
+                isStepUpWaypoint = true,
+                jumpTicks = 5,
+            )
+        )
+    }
+
+    @Test
+    fun `step up waypoint does not advance before feet clear target height`() {
+        assertFalse(
+            hasClearedFightBotStepUpWaypoint(
+                waypointY = 1.0,
+                playerY = 0.8,
+                waypointKind = BlockPathNodeKind.STEP_UP,
+            )
+        )
+
+        assertTrue(
+            hasClearedFightBotStepUpWaypoint(
+                waypointY = 1.0,
+                playerY = 0.96,
+                waypointKind = BlockPathNodeKind.STEP_UP,
+            )
+        )
+
+        assertTrue(
+            hasClearedFightBotStepUpWaypoint(
+                waypointY = 1.0,
+                playerY = 0.0,
+                waypointKind = BlockPathNodeKind.WALK,
+            )
+        )
+    }
+
+    @Test
+    fun `step up vertical progress prevents immediate stuck replans`() {
+        assertTrue(hasFightBotStepUpVerticalProgress(playerY = -59.58, bestWaypointY = -60.0))
+        assertFalse(hasFightBotStepUpVerticalProgress(playerY = -59.57, bestWaypointY = -59.58))
     }
 
     @Test
