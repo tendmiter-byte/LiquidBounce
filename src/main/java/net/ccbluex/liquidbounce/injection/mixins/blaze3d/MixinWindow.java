@@ -28,6 +28,7 @@ import net.ccbluex.liquidbounce.event.events.FramebufferResizeEvent;
 import net.ccbluex.liquidbounce.event.events.ScaleFactorChangeEvent;
 import net.ccbluex.liquidbounce.event.events.WindowResizeEvent;
 import net.ccbluex.liquidbounce.features.misc.HideAppearance;
+import net.ccbluex.liquidbounce.utils.input.TextInputContext;
 import net.minecraft.server.packs.PackResources;
 import net.minecraft.server.packs.resources.IoSupplier;
 import org.spongepowered.asm.mixin.Final;
@@ -46,6 +47,13 @@ public abstract class MixinWindow {
     @Shadow
     @Final
     private long handle;
+
+    @Inject(method = "toggleFullScreen", at = @At("HEAD"), cancellable = true)
+    private void preventFullscreenToggleWhileTyping(CallbackInfo ci) {
+        if (TextInputContext.shouldSuppressFullscreenShortcut()) {
+            ci.cancel();
+        }
+    }
 
     /**
      * Set the window icon to our client icon.

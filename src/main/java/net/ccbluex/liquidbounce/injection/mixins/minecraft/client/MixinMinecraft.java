@@ -21,6 +21,7 @@ package net.ccbluex.liquidbounce.injection.mixins.minecraft.client;
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
 import com.llamalad7.mixinextras.sugar.Local;
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.Window;
 import net.ccbluex.liquidbounce.LiquidBounce;
 import net.ccbluex.liquidbounce.event.CoroutineTicker;
@@ -57,6 +58,7 @@ import net.ccbluex.liquidbounce.render.StaticGpuBufferPool;
 import net.ccbluex.liquidbounce.render.utils.RenderingDebug;
 import net.ccbluex.liquidbounce.utils.client.vfp.VfpCompatibility;
 import net.ccbluex.liquidbounce.utils.combat.CombatManager;
+import net.ccbluex.liquidbounce.utils.input.TextInputContext;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -153,6 +155,13 @@ public abstract class MixinMinecraft {
     @Inject(method = "<init>", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;resizeGui()V"))
     private void startClient(CallbackInfo callback) {
         EventManager.INSTANCE.callEvent(ClientStartEvent.INSTANCE);
+    }
+
+    @Inject(method = "handleGlobalKeyPress", at = @At("HEAD"), cancellable = true)
+    private void preventFullscreenToggleWhileTyping(InputConstants.Key key, boolean includeClipboard, CallbackInfoReturnable<Boolean> cir) {
+        if (this.options.keyFullscreen.matches(key) && TextInputContext.shouldSuppressFullscreenShortcut()) {
+            cir.setReturnValue(false);
+        }
     }
 
     /**
