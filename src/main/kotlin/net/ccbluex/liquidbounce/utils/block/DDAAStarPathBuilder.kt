@@ -24,6 +24,7 @@ import net.ccbluex.liquidbounce.utils.client.player
 import net.ccbluex.liquidbounce.utils.client.world
 import net.ccbluex.liquidbounce.utils.entity.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.entity.getBoundingBoxAt
+import net.ccbluex.liquidbounce.utils.entity.set
 import net.ccbluex.liquidbounce.utils.math.allEmpty
 import net.ccbluex.liquidbounce.utils.movement.DirectionalInput
 import net.minecraft.core.BlockPos
@@ -537,7 +538,7 @@ interface DDAAStarPathBuilder {
 
         for (tick in 1..20) {
             if (tick > 1) {
-                input.keyPresses.jump = false
+                input.set(jump = false)
             }
 
             simPlayer.tick()
@@ -684,7 +685,7 @@ interface DDAAStarPathBuilder {
 
         for (tick in 1..12) {
             if (tick > 1) {
-                input.keyPresses.jump = false
+                input.set(jump = false)
             }
 
             simPlayer.tick()

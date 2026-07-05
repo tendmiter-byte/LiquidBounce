@@ -292,7 +292,7 @@ public abstract class MixinLocalPlayer extends MixinPlayer implements LocalPlaye
 
         // Through Walls Reach
         if (ModuleReach.INSTANCE.getRunning()) {
-            var throughWallsRange = ModuleReach.INSTANCE.getEntity().getLogic().getInteractionThroughWallsRange();
+            var throughWallsRange = ModuleReach.INSTANCE.getEntity().getInteractionThroughWallsRange();
 
             if (throughWallsRange > 0.0) {
                 var hitEntityResult = EntityRaytracingKt.findEntityInCrosshair(throughWallsRange, rotation, null);
@@ -342,12 +342,12 @@ public abstract class MixinLocalPlayer extends MixinPlayer implements LocalPlaye
         Predicate<? super Entity> customPredicate = entity -> {
             if (predicate.test(entity)) {
                 if (ModuleReach.INSTANCE.getRunning()) {
-                    double allowedRange = ModuleReach.INSTANCE.getEntity().getLogic().getInteractionRangeFor(entity);
+                    double allowedRange = ModuleReach.INSTANCE.getEntity().getInteractionRangeFor(entity);
                     if (camera instanceof LivingEntity livingCamera && !livingCamera.hasLineOfSight(entity)) {
-                        allowedRange = ModuleReach.INSTANCE.getEntity().getLogic().getThroughWallsRangeFor(entity);
+                        allowedRange = ModuleReach.INSTANCE.getEntity().getThroughWallsRangeFor(entity);
                     }
                     double distanceSqr = camera.distanceToSqr(entity.position());
-                    double hitboxMargin = ModuleReach.INSTANCE.getEntity().getLogic().adjustAttackRange(AttackRange.defaultFor((Player) camera)).hitboxMargin();
+                    double hitboxMargin = ModuleReach.INSTANCE.getEntity().adjustAttackRange(AttackRange.defaultFor((Player) camera)).hitboxMargin();
                     double allowedReachWithMargin = allowedRange + hitboxMargin;
                     return distanceSqr <= allowedReachWithMargin * allowedReachWithMargin;
                 }

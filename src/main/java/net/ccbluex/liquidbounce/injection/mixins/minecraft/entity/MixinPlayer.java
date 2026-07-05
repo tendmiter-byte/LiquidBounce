@@ -202,13 +202,13 @@ public abstract class MixinPlayer extends MixinLivingEntity {
                     var target = entityHitResult.getEntity();
                     if (target != null) {
                         if (!((Player) (Object) this).hasLineOfSight(target)) {
-                            return ModuleReach.INSTANCE.getEntity().getLogic().getThroughWallsRangeFor(target);
+                            return ModuleReach.INSTANCE.getEntity().getThroughWallsRangeFor(target);
                         }
-                        return ModuleReach.INSTANCE.getEntity().getLogic().getInteractionRangeFor(target);
+                        return ModuleReach.INSTANCE.getEntity().getInteractionRangeFor(target);
                     }
                 }
             }
-            return ModuleReach.INSTANCE.getEntity().getLogic().getEffectiveInteractionRange();
+            return ModuleReach.INSTANCE.getEntity().getEffectiveInteractionRange();
         }
 
         return original;

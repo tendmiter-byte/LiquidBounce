@@ -754,7 +754,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
 
         val combatTarget = targetTracker.target?.let { entity ->
             val distance = playerPosition.distanceTo(entity.position())
-            val range = min(ModuleKillAura.range.logic.interactionRange, distance.toFloat())
+            val range = min(ModuleKillAura.range.interactionRange, distance.toFloat())
             val outOfDistance = distance > opponentRange
 
             val targetRotation = entity.rotation.copy(pitch = 0.0f)
@@ -1776,7 +1776,7 @@ object KillAuraFightBot : NavigationBaseValueGroup<CombatContext>(ModuleKillAura
     }
 
     private fun getAttackSlotRadius(combatTarget: CombatTarget): Double {
-        val configuredRange = min(ModuleKillAura.range.logic.interactionRange, opponentRange).toDouble()
+        val configuredRange = min(ModuleKillAura.range.interactionRange, opponentRange).toDouble()
         return min(configuredRange, max(combatTarget.distance, MIN_ATTACK_SLOT_RADIUS))
     }
 
