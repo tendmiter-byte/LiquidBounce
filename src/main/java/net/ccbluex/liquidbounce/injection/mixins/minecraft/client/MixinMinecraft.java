@@ -160,7 +160,7 @@ public abstract class MixinMinecraft {
     @Inject(method = "handleGlobalKeyPress", at = @At("HEAD"), cancellable = true)
     private void preventFullscreenToggleWhileTyping(InputConstants.Key key, boolean includeClipboard, CallbackInfoReturnable<Boolean> cir) {
         if (this.options.keyFullscreen.matches(key) && TextInputContext.shouldSuppressFullscreenShortcut()) {
-            cir.setReturnValue(false);
+            cir.setReturnValue(true);
         }
     }
 

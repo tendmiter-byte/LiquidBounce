@@ -32,8 +32,12 @@ public final class TextInputContext {
     }
 
     public static boolean shouldSuppressFullscreenShortcut() {
-        Gui gui = Minecraft.getInstance().gui;
-        Screen screen = gui.screen();
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.gui == null) {
+            return false;
+        }
+
+        Screen screen = mc.gui.screen();
         if (screen == null) {
             return false;
         }
@@ -43,6 +47,15 @@ public final class TextInputContext {
         }
 
         GuiEventListener focused = screen.getFocused();
+
+        while (focused instanceof net.minecraft.client.gui.components.events.ContainerEventHandler container) {
+            GuiEventListener child = container.getFocused();
+            if (child == null || child == focused) {
+                break;
+            }
+            focused = child;
+        }
+
         return focused instanceof EditBox editBox && editBox.canConsumeInput();
     }
 
