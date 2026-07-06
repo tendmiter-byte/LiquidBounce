@@ -24,7 +24,6 @@ import net.ccbluex.liquidbounce.utils.client.player
 import net.ccbluex.liquidbounce.utils.client.world
 import net.ccbluex.liquidbounce.utils.entity.getBoundingBoxAt
 import net.ccbluex.liquidbounce.utils.math.allEmpty
-import net.ccbluex.liquidbounce.utils.raytracing.pathfinder.DDARaycast
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Vec3i
 import net.minecraft.tags.BlockTags
@@ -597,33 +596,7 @@ interface DDAAStarPathBuilder {
                 continue
             }
             if (adjacentPosition.isStandable || allowClimbable && adjacentPosition.isClimbableNode) {
-                val neighbor = adjacentPosition.immutable()
-
-                // Fast DDA Raycast pre-check for flat/downward moves to avoid expensive simulation
-                if (neighbor.y <= position.y) {
-                    val isSolidBlock = { packed: Long ->
-                        val px = BlockPos.getX(packed)
-                        val py = BlockPos.getY(packed)
-                        val pz = BlockPos.getZ(packed)
-                        val mutablePos = BlockPos.MutableBlockPos(px, py, pz)
-                        val state = world.getBlockState(mutablePos)
-                        !state.getCollisionShape(world, mutablePos).isEmpty
-                    }
-                    val startFeet = Vec3(position.x + 0.5, position.y + 0.1, position.z + 0.5)
-                    val endFeet = Vec3(neighbor.x + 0.5, neighbor.y + 0.1, neighbor.z + 0.5)
-                    if (!DDARaycast.hasLineOfSight(world, startFeet, endFeet, allowStartInside = true, isSolid = isSolidBlock)) {
-                        continue
-                    }
-                    val startHead = Vec3(position.x + 0.5, position.y + 1.6, position.z + 0.5)
-                    val endHead = Vec3(neighbor.x + 0.5, neighbor.y + 1.6, neighbor.z + 0.5)
-                    if (!DDARaycast.hasLineOfSight(world, startHead, endHead, allowStartInside = true, isSolid = isSolidBlock)) {
-                        continue
-                    }
-                }
-
-                if (PathfinderSimulation.simulateMove(position, neighbor)) {
-                    return neighbor
-                }
+                return adjacentPosition.immutable()
             }
         }
 
